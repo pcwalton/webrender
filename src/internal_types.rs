@@ -1,9 +1,10 @@
+use app_units::Au;
 use device::{ProgramId, TextureId};
 use euclid::{Point2D, Size2D};
 use std::collections::HashMap;
 use string_cache::Atom;
 use types::{Epoch, ColorF, PipelineId, ImageFormat, DisplayListID, DrawListID};
-use types::{Au, ImageID, StackingContext, DisplayListBuilder, DisplayListMode};
+use types::{ImageID, StackingContext, DisplayListBuilder, DisplayListMode};
 
 const UV_FLOAT_TO_FIXED: f32 = 65535.0;
 const COLOR_FLOAT_TO_FIXED: f32 = 255.0;

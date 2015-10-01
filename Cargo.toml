@@ -6,6 +6,9 @@ authors = ["Glenn Watson <gw@intuitionlibrary.com>"]
 [dependencies.freetype]
 git = "https://github.com/servo/rust-freetype"
 
+[dependencies.app_units]
+git = "https://github.com/servo/servo"
+
 [dependencies]
 gleam = "*"
 libc = "*"
