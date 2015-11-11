@@ -2427,85 +2427,98 @@ impl DrawCommandBuilder {
         // FIXME(pcwalton): Either use RGBA8 textures instead of alpha masks here, or implement
         // a mask combiner.
         let mask_uv = RectUv::from_image_and_rotation_angle(mask_image, rotation_angle);
-        clipper::clip_rect_to_combined_region(
-            RectPosUv {
-                pos: *vertices_rect,
-                uv: mask_uv,
-            },
-            &mut clip_buffers.sh_clip_buffers,
-            &mut clip_buffers.rect_pos_uv,
-            clip);
-        for clip_region in clip_buffers.rect_pos_uv.clip_rect_to_region_result_output.drain(..) {
-            let v0;
-            let v1;
-            let muv0;
-            let muv1;
-            match rotation_angle {
-                BasicRotationAngle::Upright => {
-                    v0 = clip_region.rect_result.pos.origin;
-                    muv0 = clip_region.rect_result.uv.top_left;
-                    v1 = clip_region.rect_result.pos.bottom_right();
-                    muv1 = clip_region.rect_result.uv.bottom_right;
+        let bounding_rect = RectPosUv {
+            pos: *vertices_rect,
+            uv: mask_uv,
+        };
+        for tessellated_rect in
+                bounding_rect.tessellate_border_corner(outer_radius,
+                                                       inner_radius,
+                                                       rotation_angle).into_iter() {
+            clipper::clip_rect_to_combined_region(tessellated_rect,
+                                                  &mut clip_buffers.sh_clip_buffers,
+                                                  &mut clip_buffers.rect_pos_uv,
+                                                  clip);
+
+            for clip_region in clip_buffers.rect_pos_uv
+                                           .clip_rect_to_region_result_output
+                                           .drain(..) {
+                let v0;
+                let v1;
+                let muv0;
+                let muv1;
+                match rotation_angle {
+                    BasicRotationAngle::Upright => {
+                        v0 = clip_region.rect_result.pos.origin;
+                        muv0 = clip_region.rect_result.uv.top_left;
+                        v1 = clip_region.rect_result.pos.bottom_right();
+                        muv1 = clip_region.rect_result.uv.bottom_right;
+                    }
+                    BasicRotationAngle::Clockwise90 => {
+                        v0 = clip_region.rect_result.pos.top_right();
+                        muv0 = clip_region.rect_result.uv.top_right;
+                        v1 = clip_region.rect_result.pos.bottom_left();
+                        muv1 = clip_region.rect_result.uv.bottom_left;
+                    }
+                    BasicRotationAngle::Clockwise180 => {
+                        v0 = clip_region.rect_result.pos.bottom_right();
+                        muv0 = clip_region.rect_result.uv.bottom_right;
+                        v1 = clip_region.rect_result.pos.origin;
+                        muv1 = clip_region.rect_result.uv.top_left;
+                    }
+                    BasicRotationAngle::Clockwise270 => {
+                        v0 = clip_region.rect_result.pos.bottom_left();
+                        muv0 = clip_region.rect_result.uv.bottom_left;
+                        v1 = clip_region.rect_result.pos.top_right();
+                        muv1 = clip_region.rect_result.uv.top_right;
+                    }
                 }
-                BasicRotationAngle::Clockwise90 => {
-                    v0 = clip_region.rect_result.pos.top_right();
-                    muv0 = clip_region.rect_result.uv.top_right;
-                    v1 = clip_region.rect_result.pos.bottom_left();
-                    muv1 = clip_region.rect_result.uv.bottom_left;
-                }
-                BasicRotationAngle::Clockwise180 => {
-                    v0 = clip_region.rect_result.pos.bottom_right();
-                    muv0 = clip_region.rect_result.uv.bottom_right;
-                    v1 = clip_region.rect_result.pos.origin;
-                    muv1 = clip_region.rect_result.uv.top_left;
-                }
-                BasicRotationAngle::Clockwise270 => {
-                    v0 = clip_region.rect_result.pos.bottom_left();
-                    muv0 = clip_region.rect_result.uv.bottom_left;
-                    v1 = clip_region.rect_result.pos.top_right();
-                    muv1 = clip_region.rect_result.uv.top_right;
-                }
+
+                let mut vertices = [
+                    PackedVertex::from_components(v0.x, v0.y,
+                                                  color0,
+                                                  0.0, 0.0,
+                                                  muv0.x, muv0.y,
+                                                  white_image.texture_index,
+                                                  mask_image.texture_index),
+                    PackedVertex::from_components(v1.x, v1.y,
+                                                  color0,
+                                                  0.0, 0.0,
+                                                  muv1.x, muv1.y,
+                                                  white_image.texture_index,
+                                                  mask_image.texture_index),
+                    PackedVertex::from_components(v0.x, v1.y,
+                                                  color0,
+                                                  0.0, 0.0,
+                                                  muv0.x, muv1.y,
+                                                  white_image.texture_index,
+                                                  mask_image.texture_index),
+                    PackedVertex::from_components(v0.x, v0.y,
+                                                  color1,
+                                                  0.0, 0.0,
+                                                  muv0.x, muv0.y,
+                                                  white_image.texture_index,
+                                                  mask_image.texture_index),
+                    PackedVertex::from_components(v1.x, v0.y,
+                                                  color1,
+                                                  0.0, 0.0,
+                                                  muv1.x, muv0.y,
+                                                  white_image.texture_index,
+                                                  mask_image.texture_index),
+                    PackedVertex::from_components(v1.x, v1.y,
+                                                  color1,
+                                                  0.0, 0.0,
+                                                  muv1.x, muv1.y,
+                                                  white_image.texture_index,
+                                                  mask_image.texture_index),
+                ];
+
+                self.add_draw_item(sort_key,
+                                   white_image.texture_id,
+                                   mask_image.texture_id,
+                                   Primitive::Triangles,
+                                   &mut vertices);
             }
-
-            let mut vertices = [
-                PackedVertex::from_components(v0.x, v0.y,
-                                              color0,
-                                              0.0, 0.0,
-                                              muv0.x, muv0.y,
-                                              white_image.texture_index,
-                                              mask_image.texture_index),
-                PackedVertex::from_components(v1.x, v1.y,
-                                              color0,
-                                              0.0, 0.0,
-                                              muv1.x, muv1.y,
-                                              white_image.texture_index, mask_image.texture_index),
-                PackedVertex::from_components(v0.x, v1.y,
-                                              color0,
-                                              0.0, 0.0,
-                                              muv0.x, muv1.y,
-                                              white_image.texture_index, mask_image.texture_index),
-                PackedVertex::from_components(v0.x, v0.y,
-                                              color1,
-                                              0.0, 0.0,
-                                              muv0.x, muv0.y,
-                                              white_image.texture_index, mask_image.texture_index),
-                PackedVertex::from_components(v1.x, v0.y,
-                                              color1,
-                                              0.0, 0.0,
-                                              muv1.x, muv0.y,
-                                              white_image.texture_index, mask_image.texture_index),
-                PackedVertex::from_components(v1.x, v1.y,
-                                              color1,
-                                              0.0, 0.0,
-                                              muv1.x, muv1.y,
-                                              white_image.texture_index, mask_image.texture_index),
-            ];
-
-            self.add_draw_item(sort_key,
-                               white_image.texture_id,
-                               mask_image.texture_id,
-                               Primitive::Triangles,
-                               &mut vertices);
         }
     }
 

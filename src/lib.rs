@@ -54,6 +54,7 @@ mod render_backend;
 mod resource_cache;
 mod resource_list;
 mod stats;
+mod tessellator;
 mod texture_cache;
 mod util;
 
