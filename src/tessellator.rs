@@ -1,25 +1,33 @@
 use euclid::{Point2D, Rect, Size2D};
-use internal_types::{BasicRotationAngle, RectPosUv};
+use internal_types::{BasicRotationAngle, BorderCornerRect, RectPosUv};
 use std::f32;
 use util;
 
-const RECT_COUNT: u32 = 8;
+pub const RECT_COUNT: u32 = 16;
 
-impl RectPosUv {
-    pub fn tessellate_border_corner(&self,
-                                    outer_radius: &Size2D<f32>,
-                                    inner_radius: &Size2D<f32>,
-                                    rotation_angle: BasicRotationAngle)
-                                    -> Vec<RectPosUv> {
+pub trait BorderCornerTessellation {
+    fn tessellate_border_corner(&self,
+                                outer_radius: &Size2D<f32>,
+                                inner_radius: &Size2D<f32>,
+                                rotation_angle: BasicRotationAngle)
+                                -> Vec<BorderCornerRect>;
+}
+
+impl BorderCornerTessellation for Rect<f32> {
+    fn tessellate_border_corner(&self,
+                                outer_radius: &Size2D<f32>,
+                                inner_radius: &Size2D<f32>,
+                                rotation_angle: BasicRotationAngle)
+                                -> Vec<BorderCornerRect> {
         let mut result = vec![];
 
-        println!("outer_radius={:?} inner_radius={:?}", outer_radius, inner_radius);
+        //println!("outer_radius={:?} inner_radius={:?}", outer_radius, inner_radius);
 
         let mut prev_x = 0.0;
         let mut prev_outer_y = outer_radius.height;
         let delta = outer_radius.width / (RECT_COUNT as f32);
 
-        for rect_index in 1..(RECT_COUNT + 1) {
+        for rect_index in 0..RECT_COUNT {
             let next_x = prev_x + delta;
 
             let next_outer_radicand = 1.0 - (next_x / outer_radius.width) *
@@ -38,10 +46,10 @@ impl RectPosUv {
                 inner_radius.height * next_inner_radicand.sqrt()
             };
 
-            println!("next_x={:?} next_outer_y={:?} next_inner_y={:?}",
+            /*println!("next_x={:?} next_outer_y={:?} next_inner_y={:?}",
                      next_x,
                      next_outer_y,
-                     next_inner_y);
+                     next_inner_y);*/
 
             let top_left = Point2D::new(prev_x, prev_outer_y);
             let bottom_right = Point2D::new(next_x, next_inner_y);
@@ -57,26 +65,26 @@ impl RectPosUv {
                               subrect.size)
                 }
                 BasicRotationAngle::Clockwise90 => {
-                    Rect::new(Point2D::new(subrect.origin.y,
-                                           outer_radius.width - subrect.max_x()),
-                              Size2D::new(subrect.size.height, subrect.size.width))
+                    Rect::new(Point2D::new(subrect.origin.x,
+                                           outer_radius.height - subrect.max_y()),
+                              subrect.size)
                 }
                 BasicRotationAngle::Clockwise180 => {
                     subrect
                 }
                 BasicRotationAngle::Clockwise270 => {
-                    Rect::new(Point2D::new(outer_radius.height - subrect.max_y(),
-                                           subrect.origin.x),
-                              Size2D::new(subrect.size.height, subrect.size.width))
+                    Rect::new(Point2D::new(outer_radius.width - subrect.max_x(),
+                                           subrect.origin.y),
+                              subrect.size)
                 }
             };
 
-            println!("angle={:?} subrect={:?}", rotation_angle, subrect);
+            //println!("angle={:?} subrect={:?}", rotation_angle, subrect);
 
-            let subrect = subrect.translate(&self.pos.origin);
-            result.push(RectPosUv {
-                pos: subrect,
-                uv: util::bilerp_rect(&subrect, &self.pos, &self.uv),
+            let subrect = subrect.translate(&self.origin);
+            result.push(BorderCornerRect {
+                rect: subrect,
+                index: rect_index,
             });
 
             prev_x = next_x;

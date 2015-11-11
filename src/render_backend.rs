@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver};
+use tessellator::{BorderCornerTessellation, RECT_COUNT};
 use texture_cache::{TextureCache, TextureCacheItem, TextureCacheItemId};
 use types::{DisplayListID, Epoch, FontKey, ImageKey, BorderDisplayItem, ScrollPolicy};
 use types::{RectangleDisplayItem, ScrollLayerId, ClearDisplayItem};
@@ -2300,6 +2301,7 @@ impl DrawCommandBuilder {
                         BorderRadiusRasterOp::create(&Size2D::new(mask_radius, mask_radius),
                                                      &Size2D::new(0.0, 0.0),
                                                      false,
+                                                     0,
                                                      ImageFormat::RGBA8).expect(
                         "Didn't find border radius mask for dashed border!");
                     let raster_item = RasterItem::BorderRadius(raster_op);
@@ -2411,30 +2413,33 @@ impl DrawCommandBuilder {
 
         // TODO: Check for zero width/height borders!
         let white_image = resource_cache.get_dummy_color_image();
-        let mask_image = match BorderRadiusRasterOp::create(outer_radius,
-                                                            inner_radius,
-                                                            false,
-                                                            ImageFormat::A8) {
-            Some(raster_item) => {
-                let raster_item = RasterItem::BorderRadius(raster_item);
-                resource_cache.get_raster(&raster_item)
-            }
-            None => {
-                resource_cache.get_dummy_mask_image()
-            }
-        };
 
-        // FIXME(pcwalton): Either use RGBA8 textures instead of alpha masks here, or implement
-        // a mask combiner.
-        let mask_uv = RectUv::from_image_and_rotation_angle(mask_image, rotation_angle);
-        let bounding_rect = RectPosUv {
-            pos: *vertices_rect,
-            uv: mask_uv,
-        };
         for tessellated_rect in
-                bounding_rect.tessellate_border_corner(outer_radius,
+                vertices_rect.tessellate_border_corner(outer_radius,
                                                        inner_radius,
                                                        rotation_angle).into_iter() {
+            let mask_image = match BorderRadiusRasterOp::create(outer_radius,
+                                                                inner_radius,
+                                                                false,
+                                                                tessellated_rect.index,
+                                                                ImageFormat::A8) {
+                Some(raster_item) => {
+                    let raster_item = RasterItem::BorderRadius(raster_item);
+                    resource_cache.get_raster(&raster_item)
+                }
+                None => {
+                    resource_cache.get_dummy_mask_image()
+                }
+            };
+
+            // FIXME(pcwalton): Either use RGBA8 textures instead of alpha masks here, or implement
+            // a mask combiner.
+            let mask_uv = RectUv::from_image_and_rotation_angle(mask_image, rotation_angle);
+            let tessellated_rect = RectPosUv {
+                pos: tessellated_rect.rect,
+                uv: mask_uv,
+            };
+
             clipper::clip_rect_to_combined_region(tessellated_rect,
                                                   &mut clip_buffers.sh_clip_buffers,
                                                   &mut clip_buffers.rect_pos_uv,
@@ -2829,28 +2834,35 @@ impl BuildRequiredResources for AABBTreeNode {
                     }
                 }
                 SpecificDisplayItem::Border(ref info) => {
-                    resource_list.add_radius_raster(&info.radius.top_left,
-                                                    &info.top_left_inner_radius(),
-                                                    false,
-                                                    ImageFormat::A8);
-                    resource_list.add_radius_raster(&info.radius.top_right,
-                                                    &info.top_right_inner_radius(),
-                                                    false,
-                                                    ImageFormat::A8);
-                    resource_list.add_radius_raster(&info.radius.bottom_left,
-                                                    &info.bottom_left_inner_radius(),
-                                                    false,
-                                                    ImageFormat::A8);
-                    resource_list.add_radius_raster(&info.radius.bottom_right,
-                                                    &info.bottom_right_inner_radius(),
-                                                    false,
-                                                    ImageFormat::A8);
+                    for rect_index in 0..RECT_COUNT {
+                        resource_list.add_radius_raster(&info.radius.top_left,
+                                                        &info.top_left_inner_radius(),
+                                                        false,
+                                                        rect_index,
+                                                        ImageFormat::A8);
+                        resource_list.add_radius_raster(&info.radius.top_right,
+                                                        &info.top_right_inner_radius(),
+                                                        false,
+                                                        rect_index,
+                                                        ImageFormat::A8);
+                        resource_list.add_radius_raster(&info.radius.bottom_left,
+                                                        &info.bottom_left_inner_radius(),
+                                                        false,
+                                                        rect_index,
+                                                        ImageFormat::A8);
+                        resource_list.add_radius_raster(&info.radius.bottom_right,
+                                                        &info.bottom_right_inner_radius(),
+                                                        false,
+                                                        rect_index,
+                                                        ImageFormat::A8);
+                    }
 
                     if info.top.style == BorderStyle::Dotted {
                         resource_list.add_radius_raster(&Size2D::new(info.top.width / 2.0,
                                                                      info.top.width / 2.0),
                                                         &Size2D::new(0.0, 0.0),
                                                         false,
+                                                        0,
                                                         ImageFormat::RGBA8);
                     }
                     if info.right.style == BorderStyle::Dotted {
@@ -2858,6 +2870,7 @@ impl BuildRequiredResources for AABBTreeNode {
                                                                      info.right.width / 2.0),
                                                         &Size2D::new(0.0, 0.0),
                                                         false,
+                                                        0,
                                                         ImageFormat::RGBA8);
                     }
                     if info.bottom.style == BorderStyle::Dotted {
@@ -2865,6 +2878,7 @@ impl BuildRequiredResources for AABBTreeNode {
                                                                      info.bottom.width / 2.0),
                                                         &Size2D::new(0.0, 0.0),
                                                         false,
+                                                        0,
                                                         ImageFormat::RGBA8);
                     }
                     if info.left.style == BorderStyle::Dotted {
@@ -2872,6 +2886,7 @@ impl BuildRequiredResources for AABBTreeNode {
                                                                      info.left.width / 2.0),
                                                         &Size2D::new(0.0, 0.0),
                                                         false,
+                                                        0,
                                                         ImageFormat::RGBA8);
                     }
                 }
@@ -2918,7 +2933,8 @@ impl BorderSideHelpers for BorderSide {
 
 fn mask_for_border_radius<'a>(resource_cache: &'a ResourceCache,
                               border_radius: f32,
-                              inverted: bool)
+                              inverted: bool,
+                              index: u32)
                               -> &'a TextureCacheItem {
     if border_radius == 0.0 {
         return resource_cache.get_dummy_mask_image()
@@ -2931,6 +2947,7 @@ fn mask_for_border_radius<'a>(resource_cache: &'a ResourceCache,
         inner_radius_x: Au(0),
         inner_radius_y: Au(0),
         inverted: inverted,
+        index: index,
         image_format: ImageFormat::A8,
     }))
 }
@@ -2946,7 +2963,8 @@ fn mask_for_clip_region<'a,P>(resource_cache: &'a ResourceCache,
         Some(ref mask_result) => {
             mask_for_border_radius(resource_cache,
                                    mask_result.border_radius,
-                                   inverted)
+                                   inverted,
+                                   0)
         }
     }
 }

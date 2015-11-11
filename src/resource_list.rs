@@ -66,10 +66,12 @@ impl ResourceList {
                              outer_radius: &Size2D<f32>,
                              inner_radius: &Size2D<f32>,
                              inverted: bool,
+                             index: u32,
                              image_format: ImageFormat) {
         if let Some(raster_item) = BorderRadiusRasterOp::create(outer_radius,
                                                                 inner_radius,
                                                                 inverted,
+                                                                index,
                                                                 image_format) {
             self.required_rasters.insert(RasterItem::BorderRadius(raster_item));
         }
@@ -77,10 +79,10 @@ impl ResourceList {
 
     pub fn add_radius_raster_for_border_radii(&mut self, radii: &BorderRadius) {
         let zero_size = Size2D::new(0.0, 0.0);
-        self.add_radius_raster(&radii.top_left, &zero_size, false, ImageFormat::A8);
-        self.add_radius_raster(&radii.top_right, &zero_size, false, ImageFormat::A8);
-        self.add_radius_raster(&radii.bottom_left, &zero_size, false, ImageFormat::A8);
-        self.add_radius_raster(&radii.bottom_right, &zero_size, false, ImageFormat::A8);
+        self.add_radius_raster(&radii.top_left, &zero_size, false, 0, ImageFormat::A8);
+        self.add_radius_raster(&radii.top_right, &zero_size, false, 0, ImageFormat::A8);
+        self.add_radius_raster(&radii.bottom_left, &zero_size, false, 0, ImageFormat::A8);
+        self.add_radius_raster(&radii.bottom_right, &zero_size, false, 0, ImageFormat::A8);
     }
 
     pub fn add_box_shadow_corner(&mut self, blur_radius: f32, border_radius: f32, inverted: bool) {
