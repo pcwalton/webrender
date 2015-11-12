@@ -2449,7 +2449,7 @@ impl DrawCommandBuilder {
             for clip_region in clip_buffers.rect_pos_uv
                                            .clip_rect_to_region_result_output
                                            .drain(..) {
-                let rect_pos_uv = &tessellated_rect;
+                let rect_pos_uv = &clip_region.rect_result;
                 let v0;
                 let v1;
                 let muv0;
@@ -2468,10 +2468,9 @@ impl DrawCommandBuilder {
                     BasicRotationAngle::Clockwise90 => {
                         v0 = rect_pos_uv.pos.top_right();
                         v1 = rect_pos_uv.pos.bottom_left();
-
-                        muv0 = rect_pos_uv.uv.bottom_left;
+                        muv0 = rect_pos_uv.uv.top_right;
                         muv1 = rect_pos_uv.uv.top_left;
-                        muv2 = rect_pos_uv.uv.top_right;
+                        muv2 = rect_pos_uv.uv.bottom_left;
                         muv3 = rect_pos_uv.uv.bottom_right;
                     }
                     BasicRotationAngle::Clockwise180 => {
@@ -2485,9 +2484,9 @@ impl DrawCommandBuilder {
                     BasicRotationAngle::Clockwise270 => {
                         v0 = rect_pos_uv.pos.bottom_left();
                         v1 = rect_pos_uv.pos.top_right();
-                        muv0 = rect_pos_uv.uv.top_right;
+                        muv0 = rect_pos_uv.uv.bottom_left;
                         muv1 = rect_pos_uv.uv.bottom_right;
-                        muv2 = rect_pos_uv.uv.bottom_left;
+                        muv2 = rect_pos_uv.uv.top_right;
                         muv3 = rect_pos_uv.uv.top_left;
                     }
                 }

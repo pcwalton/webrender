@@ -513,9 +513,6 @@ impl Renderer {
                                 let zero_point = Point2D::new(0.0, 0.0);
                                 let zero_size = Size2D::new(0.0, 0.0);
 
-                                let rect = Rect::new(Point2D::new(x, y),
-                                                     Size2D::new(outer_rx, outer_ry));
-
                                 let (x, y) = (x as f32, y as f32);
                                 let (width, height) = (width as f32, height as f32);
 

@@ -1,7 +1,5 @@
 use euclid::{Point2D, Rect, Size2D};
-use internal_types::{BasicRotationAngle, BorderCornerRect, RectPosUv};
-use std::f32;
-use util;
+use internal_types::BasicRotationAngle;
 
 pub const RECT_COUNT: u32 = 4;
 
@@ -21,20 +19,12 @@ impl BorderCornerTessellation for Rect<f32> {
                                 rotation_angle: BasicRotationAngle,
                                 index: u32)
                                 -> Rect<f32> {
-        //println!("outer_radius={:?} inner_radius={:?}", outer_radius, inner_radius);
-
         let delta = outer_radius.width / (RECT_COUNT as f32);
-        let mut prev_x = delta * (index as f32);
-        let mut prev_outer_y = ellipse_y_coordinate(prev_x, outer_radius);
+        let prev_x = delta * (index as f32);
+        let prev_outer_y = ellipse_y_coordinate(prev_x, outer_radius);
 
         let next_x = prev_x + delta;
-        let next_outer_y = ellipse_y_coordinate(next_x, outer_radius);
         let next_inner_y = ellipse_y_coordinate(next_x, inner_radius);
-
-        /*println!("next_x={:?} next_outer_y={:?} next_inner_y={:?}",
-                 next_x,
-                 next_outer_y,
-                 next_inner_y);*/
 
         let top_left = Point2D::new(prev_x, prev_outer_y);
         let bottom_right = Point2D::new(next_x, next_inner_y);
@@ -63,8 +53,6 @@ impl BorderCornerTessellation for Rect<f32> {
                           subrect.size)
             }
         };
-
-        //println!("angle={:?} subrect={:?}", rotation_angle, subrect);
 
         subrect.translate(&self.origin)
     }
