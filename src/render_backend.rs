@@ -2414,14 +2414,15 @@ impl DrawCommandBuilder {
         // TODO: Check for zero width/height borders!
         let white_image = resource_cache.get_dummy_color_image();
 
-        for tessellated_rect in
-                vertices_rect.tessellate_border_corner(outer_radius,
-                                                       inner_radius,
-                                                       rotation_angle).into_iter() {
+        for rect_index in 0..RECT_COUNT {
+            let tessellated_rect = vertices_rect.tessellate_border_corner(outer_radius,
+                                                                          inner_radius,
+                                                                          rotation_angle,
+                                                                          rect_index);
             let mask_image = match BorderRadiusRasterOp::create(outer_radius,
                                                                 inner_radius,
                                                                 false,
-                                                                tessellated_rect.index,
+                                                                rect_index,
                                                                 ImageFormat::A8) {
                 Some(raster_item) => {
                     let raster_item = RasterItem::BorderRadius(raster_item);
@@ -2436,7 +2437,7 @@ impl DrawCommandBuilder {
             // a mask combiner.
             let mask_uv = RectUv::from_image_and_rotation_angle(mask_image, rotation_angle);
             let tessellated_rect = RectPosUv {
-                pos: tessellated_rect.rect,
+                pos: tessellated_rect,
                 uv: mask_uv,
             };
 
@@ -2448,34 +2449,46 @@ impl DrawCommandBuilder {
             for clip_region in clip_buffers.rect_pos_uv
                                            .clip_rect_to_region_result_output
                                            .drain(..) {
+                let rect_pos_uv = &tessellated_rect;
                 let v0;
                 let v1;
                 let muv0;
                 let muv1;
+                let muv2;
+                let muv3;
                 match rotation_angle {
                     BasicRotationAngle::Upright => {
-                        v0 = clip_region.rect_result.pos.origin;
-                        muv0 = clip_region.rect_result.uv.top_left;
-                        v1 = clip_region.rect_result.pos.bottom_right();
-                        muv1 = clip_region.rect_result.uv.bottom_right;
+                        v0 = rect_pos_uv.pos.origin;
+                        v1 = rect_pos_uv.pos.bottom_right();
+                        muv0 = rect_pos_uv.uv.top_left;
+                        muv1 = rect_pos_uv.uv.top_right;
+                        muv2 = rect_pos_uv.uv.bottom_right;
+                        muv3 = rect_pos_uv.uv.bottom_left;
                     }
                     BasicRotationAngle::Clockwise90 => {
-                        v0 = clip_region.rect_result.pos.top_right();
-                        muv0 = clip_region.rect_result.uv.top_right;
-                        v1 = clip_region.rect_result.pos.bottom_left();
-                        muv1 = clip_region.rect_result.uv.bottom_left;
+                        v0 = rect_pos_uv.pos.top_right();
+                        v1 = rect_pos_uv.pos.bottom_left();
+
+                        muv0 = rect_pos_uv.uv.bottom_left;
+                        muv1 = rect_pos_uv.uv.top_left;
+                        muv2 = rect_pos_uv.uv.top_right;
+                        muv3 = rect_pos_uv.uv.bottom_right;
                     }
                     BasicRotationAngle::Clockwise180 => {
-                        v0 = clip_region.rect_result.pos.bottom_right();
-                        muv0 = clip_region.rect_result.uv.bottom_right;
-                        v1 = clip_region.rect_result.pos.origin;
-                        muv1 = clip_region.rect_result.uv.top_left;
+                        v0 = rect_pos_uv.pos.bottom_right();
+                        v1 = rect_pos_uv.pos.origin;
+                        muv0 = rect_pos_uv.uv.bottom_right;
+                        muv1 = rect_pos_uv.uv.bottom_left;
+                        muv2 = rect_pos_uv.uv.top_left;
+                        muv3 = rect_pos_uv.uv.top_right;
                     }
                     BasicRotationAngle::Clockwise270 => {
-                        v0 = clip_region.rect_result.pos.bottom_left();
-                        muv0 = clip_region.rect_result.uv.bottom_left;
-                        v1 = clip_region.rect_result.pos.top_right();
-                        muv1 = clip_region.rect_result.uv.top_right;
+                        v0 = rect_pos_uv.pos.bottom_left();
+                        v1 = rect_pos_uv.pos.top_right();
+                        muv0 = rect_pos_uv.uv.top_right;
+                        muv1 = rect_pos_uv.uv.bottom_right;
+                        muv2 = rect_pos_uv.uv.bottom_left;
+                        muv3 = rect_pos_uv.uv.top_left;
                     }
                 }
 
@@ -2489,13 +2502,13 @@ impl DrawCommandBuilder {
                     PackedVertex::from_components(v1.x, v1.y,
                                                   color0,
                                                   0.0, 0.0,
-                                                  muv1.x, muv1.y,
+                                                  muv2.x, muv2.y,
                                                   white_image.texture_index,
                                                   mask_image.texture_index),
                     PackedVertex::from_components(v0.x, v1.y,
                                                   color0,
                                                   0.0, 0.0,
-                                                  muv0.x, muv1.y,
+                                                  muv3.x, muv3.y,
                                                   white_image.texture_index,
                                                   mask_image.texture_index),
                     PackedVertex::from_components(v0.x, v0.y,
@@ -2507,13 +2520,13 @@ impl DrawCommandBuilder {
                     PackedVertex::from_components(v1.x, v0.y,
                                                   color1,
                                                   0.0, 0.0,
-                                                  muv1.x, muv0.y,
+                                                  muv1.x, muv1.y,
                                                   white_image.texture_index,
                                                   mask_image.texture_index),
                     PackedVertex::from_components(v1.x, v1.y,
                                                   color1,
                                                   0.0, 0.0,
-                                                  muv1.x, muv1.y,
+                                                  muv2.x, muv2.y,
                                                   white_image.texture_index,
                                                   mask_image.texture_index),
                 ];

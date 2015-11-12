@@ -14,11 +14,11 @@ use tessellator::BorderCornerTessellation;
 use types::ImageFormat;
 use util;
 
-const LEVELS_PER_TEXTURE: u8 = 8;
+const LEVELS_PER_TEXTURE: u8 = 16;
 
 // TODO(pcwalton): This is pretty small. Maybe detect the max GL texture size at runtime and use
 // that?
-const TEXTURE_SIZE: u32 = 1024;
+const TEXTURE_SIZE: u32 = 2048;
 
 pub type TextureCacheItemId = FreeListItemId;
 
@@ -475,7 +475,8 @@ impl TextureCache {
                 let tessellated_rect = rect.tessellate_border_corner(
                     &Size2D::new(op.outer_radius_x.to_f32_px(), op.outer_radius_y.to_f32_px()),
                     &Size2D::new(op.inner_radius_x.to_f32_px(), op.inner_radius_y.to_f32_px()),
-                    BasicRotationAngle::Upright)[op.index as usize].rect;
+                    BasicRotationAngle::Upright,
+                    op.index);
                 let width = tessellated_rect.size.width.round() as u32;
                 let height = tessellated_rect.size.height.round() as u32;
 

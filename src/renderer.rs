@@ -241,6 +241,7 @@ impl Renderer {
                         let vao_id = self.device.create_vao();
                         self.device.bind_vao(vao_id);
 
+                        println!("updating {:?} vertices", vertices.len());
                         self.device.update_vao_indices(vao_id, &indices, VertexUsageHint::Static);
                         self.device.update_vao_vertices(vao_id,
                                                         &vertices,
@@ -504,7 +505,8 @@ impl Renderer {
                                     tessellated_rect.tessellate_border_corner(
                                         &Size2D::new(outer_rx, outer_ry),
                                         &Size2D::new(inner_rx, inner_ry),
-                                        BasicRotationAngle::Upright)[index as usize].rect;
+                                        BasicRotationAngle::Upright,
+                                        index);
                                 let border_position =
                                     Point2D::new(x - tessellated_rect.origin.x + outer_rx,
                                                  y - tessellated_rect.origin.y + outer_ry);

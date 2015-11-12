@@ -57,8 +57,8 @@ impl RenderBatch {
                        vertices_ok;
 
         if !batch_ok {
-            //println!("break batch! matrix={} program={} color={} mask={} vertices={} [{:?} vs {:?}]",
-            //         matrix_ok, program_ok, color_texture_ok, mask_texture_ok, vertices_ok, color_texture_id, self.color_texture_id);
+            println!("break batch! matrix={} program={} color={} mask={} vertices={} [{:?} vs {:?}]",
+                     matrix_ok, program_ok, color_texture_ok, mask_texture_ok, vertices_ok, color_texture_id, self.color_texture_id);
         }
 
         batch_ok
