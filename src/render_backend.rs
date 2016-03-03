@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use texture_cache::{TextureCache, TextureCacheItemId};
+use time;
 use webrender_traits::{ApiMsg, IdNamespace, RenderNotifier};
 use webrender_traits::{WebGLContextId, ScrollLayerId};
 use batch::new_id;
@@ -77,7 +78,13 @@ impl RenderBackend {
         let mut profile_counters = BackendProfileCounters::new();
 
         loop {
+            let before = time::precise_time_ns();
             let msg = self.api_rx.recv();
+            let after = time::precise_time_ns();
+            let elapsed = (after - before) / 1_000_000;
+            if elapsed > 0 {
+                println!("deserialization: {}ms", elapsed);
+            }
 
             match msg {
                 Ok(msg) => {
