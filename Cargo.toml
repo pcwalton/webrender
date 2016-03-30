@@ -32,7 +32,6 @@ git = "https://github.com/servo/webrender_traits"
 #branch = "inotify-modify"
 
 [dependencies]
-offscreen_gl_context = {version = "0.1.1", features = ["serde_serialization"]}
 gleam = "0.2"
 euclid = {version = "0.6.2", features = ["plugins"]}
 num = {version = "0.1.31", default-features = false}
@@ -42,6 +41,10 @@ scoped_threadpool = "0.1.6"
 app_units = {version = "0.2.1", features = ["plugins"]}
 lazy_static = "0.1"
 log = "0.3"
+
+[dependencies.offscreen_gl_context]
+git = "https://github.com/ecoal95/rust-offscreen-rendering-context"
+features = ["serde_serialization"]
 
 [target.x86_64-apple-darwin.dependencies]
 core-graphics = ">=0.2, <0.4"
