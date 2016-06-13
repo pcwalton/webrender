@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use batch::RasterBatch;
 use bit_set::BitSet;
 use debug_render::DebugRenderer;
 use device::{Device, ProgramId, TextureId, UniformLocation, VertexFormat, GpuProfile};
@@ -12,8 +13,8 @@ use internal_types::{RendererFrame, ResultMsg, TextureUpdateOp};
 use internal_types::{TextureUpdateDetails, TextureUpdateList, PackedVertex, RenderTargetMode};
 use internal_types::{ORTHO_NEAR_PLANE, ORTHO_FAR_PLANE, DevicePixel};
 use internal_types::{PackedVertexForTextureCacheUpdate, CompositionOp, ChildLayerIndex};
-use internal_types::{AxisDirection, LowLevelFilterOp, DrawCommand, DrawLayer, ANGLE_FLOAT_TO_FIXED};
-use internal_types::{BasicRotationAngle, RenderTargetId};
+use internal_types::{AxisDirection, LowLevelFilterOp, ANGLE_FLOAT_TO_FIXED};
+use internal_types::{RenderTargetId};
 use ipc_channel::ipc;
 use profiler::{Profiler, BackendProfileCounters};
 use profiler::{RendererProfileTimers, RendererProfileCounters};
@@ -1025,6 +1026,7 @@ impl Renderer {
         }
     }
 
+/*
     fn compute_layer_viewport_in_render_target_space(&self, layer: &DrawLayer) -> Rect<f32> {
         let layer_origin = Point2D::new(layer.origin.x * self.device_pixel_ratio,
                                         layer.origin.y * self.device_pixel_ratio);
@@ -1075,7 +1077,7 @@ impl Renderer {
                 }
             }
         }
-    }
+    }*/
 
     fn draw_prim_cache_pass(&mut self,
                             pass: &Pass,
