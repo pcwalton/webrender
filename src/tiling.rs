@@ -1101,7 +1101,7 @@ impl TransformedRect {
         let height = self.bounding_rect.size.height;
         let area = width.0 * height.0;
 
-        width.0 > 512 || height.0 > 512 || area > 256*256
+        width.0 > 256 || height.0 > 256 || area > 128 * 128
     }
 }
 
