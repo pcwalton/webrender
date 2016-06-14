@@ -247,6 +247,7 @@ impl TexturePage {
 
     #[inline(never)]
     fn coalesce(&mut self) {
+        println!("coalescing!");
         // Iterate to a fixed point or until a timeout is reached.
         let deadline = time::precise_time_ns() + COALESCING_TIMEOUT;
         let mut free_list = mem::replace(&mut self.free_list, FreeRectList::new()).into_vec();

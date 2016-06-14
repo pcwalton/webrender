@@ -136,7 +136,7 @@ impl Layer {
         let finished = self.scrolling.spring.animate();
         self.scrolling.offset = self.scrolling.spring.current();
         if finished {
-            self.scrolling.started_bouncing_back = false;
+            self.scrolling.started_bouncing_back = false
         }
     }
 }
