@@ -604,6 +604,12 @@ impl GpuProfile {
         GpuProfile
     }
 
+    #[cfg(any(target_os = "android", target_os = "gonk"))]
+    pub fn get(&mut self) -> u64 {
+        0
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "gonk")))]
     pub fn get(&mut self) -> u64 {
         let qi = self.next_query;
         gl::get_query_object_ui64v(self.qids[qi], gl::QUERY_RESULT)

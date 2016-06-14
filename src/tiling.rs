@@ -1648,6 +1648,7 @@ impl Pass {
 pub struct Tile {
     bsp_tree: BspTree<RenderableInstanceId>,
     pub batches: HashMap<BatchKey, Vec<CompositeTile>, BuildHasherDefault<FnvHasher>>,
+    rect: Rect<DevicePixel>,
 
     instances: Vec<RenderableId>,
     debug_rects: Vec<DebugRect>,
@@ -1662,6 +1663,7 @@ impl Tile {
            y1: DevicePixel) -> Tile {
         let tile_rect = rect_from_points(x0, y0, x1, y1);
         Tile {
+            rect: tile_rect,
             batches: HashMap::with_hasher(Default::default()),
             bsp_tree: BspTree::new(tile_rect),
             debug_rects: Vec::new(),
@@ -2025,8 +2027,8 @@ impl FrameBuilder {
         resource_cache.add_resource_list(&resource_list, frame_id);
         resource_cache.raster_pending_glyphs(frame_id);
 
-        let x_tile_size = DevicePixel(256);
-        let y_tile_size = DevicePixel(256);
+        let x_tile_size = DevicePixel(512);
+        let y_tile_size = DevicePixel(512);
         let x_tile_count = (screen_rect.size.width + x_tile_size - DevicePixel(1)).0 / x_tile_size.0;
         let y_tile_count = (screen_rect.size.height + y_tile_size - DevicePixel(1)).0 / y_tile_size.0;
 
@@ -2103,6 +2105,18 @@ impl FrameBuilder {
                 TextureId(0),
                 TextureId(0),
             ];
+
+/*
+            if self.debug {
+                let color = ColorF::new(1.0, 0.0, 0.0, 1.0);
+                let debug_rect = DebugRect {
+                    label: String::new(),
+                    color: color,
+                    rect: tile.rect,
+                };
+                debug_rects.push(debug_rect);
+            }
+*/
 
             bsp_tree.split(self.device_pixel_ratio, &mut |rect, cover_indices, partial_indices| {
                 if cover_indices.is_empty() && partial_indices.is_empty() {
