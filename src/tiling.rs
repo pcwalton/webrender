@@ -27,6 +27,21 @@ use webrender_traits::{BoxShadowClipMode, PipelineId, ScrollLayerId};
 
 const INVALID_LAYER_INDEX: u32 = 0xffffffff;
 
+fn project_point(point: Point2D<f32>,
+                 transform: &Matrix4D<f32>,
+                 device_pixel_ratio: f32) -> Point2D<DevicePixel> {
+    let vertex = transform.transform_point4d(&Point4D::new(point.x,
+                                                           point.y,
+                                                           0.0,
+                                                           1.0));
+    let inv_w = 1.0 / vertex.w;
+    let vx = vertex.x * inv_w;
+    let vy = vertex.y * inv_w;
+
+    Point2D::new(DevicePixel((vx * device_pixel_ratio).round() as i32),
+                 DevicePixel((vy * device_pixel_ratio).round() as i32))
+}
+
 #[derive(Debug)]
 struct TilingInfo {
     x_tile_count: i32,
@@ -281,73 +296,82 @@ impl Primitive {
             PrimitiveDetails::Rectangle(ref details) => {
                 if let Some(clip_index) = self.clip_index {
                     if xf_rect.should_split() {
-                        // TODO(gw): This doesn't handle 3d transformed rectangles
-                        //           or irregular clip sizes at all!. Fix!
+                        // TODO(gw): This doesn't handle irregular clip sizes at all!. Fix!
                         let rect = &xf_rect.local_rect;
                         let ClipIndex(clip_index) = clip_index;
                         let clip = &clips[clip_index as usize];
                         let radius = clip.top_left.outer_radius_x;
 
-                        let tl_outer = Point2D::new(rect.origin.x, rect.origin.y);
-                        let tl_inner = tl_outer + Point2D::new(radius, radius);
-
-                        let tr_outer = Point2D::new(rect.origin.x + rect.size.width, rect.origin.y);
-                        let tr_inner = tr_outer + Point2D::new(-radius, radius);
-
-                        let bl_outer = Point2D::new(rect.origin.x, rect.origin.y + rect.size.height);
-                        let bl_inner = bl_outer + Point2D::new(radius, -radius);
-
-                        let br_outer = Point2D::new(rect.origin.x + rect.size.width,
-                                                    rect.origin.y + rect.size.height);
-                        let br_inner = br_outer - Point2D::new(radius, radius);
+                        let tl_outer = project_point(Point2D::new(rect.origin.x, rect.origin.y),
+                                                     transform,
+                                                     device_pixel_ratio);
+                        let tl_inner = project_point(Point2D::new(rect.origin.x + radius,
+                                                                  rect.origin.y + radius),
+                                                     transform,
+                                                     device_pixel_ratio);
+                        let tr_outer = project_point(Point2D::new(rect.origin.x + rect.size.width,
+                                                                  rect.origin.y),
+                                                     transform,
+                                                     device_pixel_ratio);
+                        let tr_inner = project_point(Point2D::new(rect.origin.x + rect.size.width - radius,
+                                                                  rect.origin.y + radius),
+                                                     transform,
+                                                     device_pixel_ratio);
+                        let bl_outer = project_point(Point2D::new(rect.origin.x,
+                                                                  rect.origin.y + rect.size.height),
+                                                     transform,
+                                                     device_pixel_ratio);
+                        let bl_inner = project_point(Point2D::new(rect.origin.x + radius,
+                                                                  rect.origin.y + rect.size.height - radius),
+                                                     transform,
+                                                     device_pixel_ratio);
+                        let br_outer = project_point(Point2D::new(rect.origin.x + rect.size.width,
+                                                                  rect.origin.y + rect.size.height),
+                                                     transform,
+                                                     device_pixel_ratio);
+                        let br_inner = project_point(Point2D::new(rect.origin.x + rect.size.width - radius,
+                                                                  rect.origin.y + rect.size.height - radius),
+                                                     transform,
+                                                     device_pixel_ratio);
 
                         // Clipped corners
-                        let r0 = rect_from_points_f(tl_outer.x, tl_outer.y, tl_inner.x, tl_inner.y);
-                        let xf0 = TransformedRect::new(&r0, transform, device_pixel_ratio);
-                        renderables.push_clipped_rect(&xf0, tile_info, layer_index, prim_index, &details.color);
+                        let r0 = rect_from_points(tl_outer.x, tl_outer.y, tl_inner.x, tl_inner.y);
+                        renderables.push_clipped_rect(&r0, tile_info, layer_index, prim_index, &details.color);
 
-                        let r1 = rect_from_points_f(tr_inner.x, tr_outer.y, tr_outer.x, tr_inner.y);
-                        let xf1 = TransformedRect::new(&r1, transform, device_pixel_ratio);
-                        renderables.push_clipped_rect(&xf1, tile_info, layer_index, prim_index, &details.color);
+                        let r1 = rect_from_points(tr_inner.x, tr_outer.y, tr_outer.x, tr_inner.y);
+                        renderables.push_clipped_rect(&r1, tile_info, layer_index, prim_index, &details.color);
 
-                        let r2 = rect_from_points_f(bl_outer.x, bl_inner.y, bl_inner.x, bl_outer.y);
-                        let xf2 = TransformedRect::new(&r2, transform, device_pixel_ratio);
-                        renderables.push_clipped_rect(&xf2, tile_info, layer_index, prim_index, &details.color);
+                        let r2 = rect_from_points(bl_outer.x, bl_inner.y, bl_inner.x, bl_outer.y);
+                        renderables.push_clipped_rect(&r2, tile_info, layer_index, prim_index, &details.color);
 
-                        let r3 = rect_from_points_f(br_inner.x, br_inner.y, br_outer.x, br_outer.y);
-                        let xf3 = TransformedRect::new(&r3, transform, device_pixel_ratio);
-                        renderables.push_clipped_rect(&xf3, tile_info, layer_index, prim_index, &details.color);
+                        let r3 = rect_from_points(br_inner.x, br_inner.y, br_outer.x, br_outer.y);
+                        renderables.push_clipped_rect(&r3, tile_info, layer_index, prim_index, &details.color);
 
                         // Non-clipped regions
-                        let r4 = rect_from_points_f(tl_outer.x, tl_inner.y, bl_inner.x, bl_inner.y);
-                        let xf4 = TransformedRect::new(&r4, transform, device_pixel_ratio);
-                        renderables.push_rect(&xf4, tile_info, layer_index, prim_index, &details.color);
+                        let r4 = rect_from_points(tl_outer.x, tl_inner.y, bl_inner.x, bl_inner.y);
+                        renderables.push_rect(&r4, tile_info, layer_index, prim_index, &ColorF::new(1.0, 0.0, 0.0, 1.0));
 
-                        let r5 = rect_from_points_f(tr_inner.x, tr_inner.y, br_outer.x, br_inner.y);
-                        let xf5 = TransformedRect::new(&r5, transform, device_pixel_ratio);
-                        renderables.push_rect(&xf5, tile_info, layer_index, prim_index, &details.color);
+                        let r5 = rect_from_points(tr_inner.x, tr_inner.y, br_outer.x, br_inner.y);
+                        renderables.push_rect(&r5, tile_info, layer_index, prim_index, &ColorF::new(0.0, 1.0, 0.0, 1.0));
 
-                        let r6 = rect_from_points_f(tl_inner.x, tl_inner.y, tr_inner.x, tr_outer.y);
-                        let xf6 = TransformedRect::new(&r6, transform, device_pixel_ratio);
-                        renderables.push_rect(&xf6, tile_info, layer_index, prim_index, &details.color);
+                        let r6 = rect_from_points(tl_inner.x, tl_inner.y, tr_inner.x, tr_outer.y);
+                        renderables.push_rect(&r6, tile_info, layer_index, prim_index, &ColorF::new(0.0, 0.0, 1.0, 1.0));
 
-                        let r7 = rect_from_points_f(bl_inner.x, bl_inner.y, br_inner.x, br_outer.y);
-                        let xf7 = TransformedRect::new(&r7, transform, device_pixel_ratio);
-                        renderables.push_rect(&xf7, tile_info, layer_index, prim_index, &details.color);
+                        let r7 = rect_from_points(bl_inner.x, bl_inner.y, br_inner.x, br_outer.y);
+                        renderables.push_rect(&r7, tile_info, layer_index, prim_index, &ColorF::new(1.0, 1.0, 0.0, 1.0));
 
                         // Center
-                        let r8 = rect_from_points_f(tl_inner.x, tl_inner.y, br_inner.x, br_inner.y);
-                        let xf8 = TransformedRect::new(&r8, transform, device_pixel_ratio);
-                        renderables.push_rect(&xf8, tile_info, layer_index, prim_index, &details.color);
+                        //let r8 = rect_from_points(tl_inner.x, tl_inner.y, br_inner.x, br_inner.y);
+                        //renderables.push_rect(&r8, tile_info, layer_index, prim_index, &ColorF::new(1.0, 1.0, 1.0, 1.0));
                     } else {
-                        renderables.push_clipped_rect(&xf_rect,
+                        renderables.push_clipped_rect(&xf_rect.bounding_rect,
                                                       tile_info,
                                                       layer_index,
                                                       prim_index,
                                                       &details.color);
                     }
                 } else {
-                    renderables.push_rect(&xf_rect,
+                    renderables.push_rect(&xf_rect.bounding_rect,
                                           tile_info,
                                           layer_index,
                                           prim_index,
@@ -381,7 +405,7 @@ impl Primitive {
                                                                transform,
                                                                device_pixel_ratio);
 
-                        renderables.push_rect(&top_xf_rect,
+                        renderables.push_rect(&top_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -396,7 +420,7 @@ impl Primitive {
                                                                 transform,
                                                                 device_pixel_ratio);
 
-                        renderables.push_rect(&left_xf_rect,
+                        renderables.push_rect(&left_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -411,7 +435,7 @@ impl Primitive {
                                                                  transform,
                                                                  device_pixel_ratio);
 
-                        renderables.push_rect(&right_xf_rect,
+                        renderables.push_rect(&right_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -426,7 +450,7 @@ impl Primitive {
                                                                   transform,
                                                                   device_pixel_ratio);
 
-                        renderables.push_rect(&bottom_xf_rect,
+                        renderables.push_rect(&bottom_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -478,7 +502,7 @@ impl Primitive {
                                                                transform,
                                                                device_pixel_ratio);
 
-                        renderables.push_rect(&top_xf_rect,
+                        renderables.push_rect(&top_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -493,7 +517,7 @@ impl Primitive {
                                                                 transform,
                                                                 device_pixel_ratio);
 
-                        renderables.push_rect(&left_xf_rect,
+                        renderables.push_rect(&left_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -508,7 +532,7 @@ impl Primitive {
                                                                  transform,
                                                                  device_pixel_ratio);
 
-                        renderables.push_rect(&right_xf_rect,
+                        renderables.push_rect(&right_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -523,7 +547,7 @@ impl Primitive {
                                                                   transform,
                                                                   device_pixel_ratio);
 
-                        renderables.push_rect(&bottom_xf_rect,
+                        renderables.push_rect(&bottom_xf_rect.bounding_rect,
                                               tile_info,
                                               layer_index,
                                               prim_index,
@@ -802,25 +826,25 @@ impl RenderableList {
     }
 
     fn push_clipped_rect(&mut self,
-                         xf_rect: &TransformedRect,
+                         bounding_rect: &Rect<DevicePixel>,
                          tile_info: &TilingInfo,
                          layer_index: RenderLayerIndex,
                          prim_index: PrimitiveIndex,
                          color: &ColorF) {
-        if xf_rect.bounding_rect.size.width.0 <= 0 ||
-           xf_rect.bounding_rect.size.height.0 <= 0 {
+        if bounding_rect.size.width.0 <= 0 ||
+           bounding_rect.size.height.0 <= 0 {
             return;
         }
 
         self.renderables.push(Renderable {
-            bounding_rect: xf_rect.bounding_rect,
-            tile_range: tile_info.get_tile_range(&xf_rect.bounding_rect),
+            bounding_rect: *bounding_rect,
+            tile_range: tile_info.get_tile_range(bounding_rect),
             layer_index: layer_index,
             primitive_index: prim_index,
             is_opaque: false,
             texture_id: TextureId(0),
             location: None,
-            cache_size: xf_rect.bounding_rect.size,
+            cache_size: bounding_rect.size,
             st_offset: DevicePixel(0),
             clip_parts: ClipPart::All,
             details: RenderableDetails::Rectangle(RenderableRectangleDetails {
@@ -830,19 +854,19 @@ impl RenderableList {
     }
 
     fn push_rect(&mut self,
-                 xf_rect: &TransformedRect,
+                 bounding_rect: &Rect<DevicePixel>,
                  tile_info: &TilingInfo,
                  layer_index: RenderLayerIndex,
                  prim_index: PrimitiveIndex,
                  color: &ColorF) {
-        if xf_rect.bounding_rect.size.width.0 <= 0 ||
-           xf_rect.bounding_rect.size.height.0 <= 0 {
+        if bounding_rect.size.width.0 <= 0 ||
+           bounding_rect.size.height.0 <= 0 {
             return;
         }
 
         self.renderables.push(Renderable {
-            bounding_rect: xf_rect.bounding_rect,
-            tile_range: tile_info.get_tile_range(&xf_rect.bounding_rect),
+            bounding_rect: *bounding_rect,
+            tile_range: tile_info.get_tile_range(bounding_rect),
             layer_index: layer_index,
             primitive_index: prim_index,
             is_opaque: color.a == 1.0,
