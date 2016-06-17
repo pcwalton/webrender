@@ -16,7 +16,7 @@ struct BspNodeIndex(usize);
 #[derive(Debug, Copy, Clone)]
 struct BspItemIndex(usize);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 enum SplitKind {
     Horizontal,
     Vertical,
@@ -95,7 +95,7 @@ impl<T: Copy> BspTree<T> {
 
     fn split_internal<F>(&mut self,
                          node_index: BspNodeIndex,
-                         split_kind: SplitKind,
+                         mut split_kind: SplitKind,
                          level: i32,
                          current_cover_items: &Vec<T>,
                          cover_buffer: &mut Vec<T>,
@@ -158,72 +158,85 @@ impl<T: Copy> BspTree<T> {
         //    indent.push_str("  ");
         //}
 
-        let cx = ((nx0.0 as f32 + nx1.0 as f32) * 0.5).round() as i32;
-        let cy = ((ny0.0 as f32 + ny1.0 as f32) * 0.5).round() as i32;
-        let center = Point2D::new(DevicePixel::from_i32(cx), DevicePixel::from_i32(cy));
-        let mut best_distance = Point2D::new(i32::MAX, i32::MAX);
-        let mut split_pos = center;
-
-        for item_index in &partial_items {
-            let BspItemIndex(item_index) = *item_index;
-            let item = &self.items[item_index];
-
-            // Only a valid split point if it sits exactly on a device pixel!
-            let x0 = item.rect.origin.x;
-            let x1 = x0 + item.rect.size.width;
-
-            if x0 > nx0 && x0 < nx1 {
-                let d = (x0.0 - center.x.0).abs();
-                if d < best_distance.x {
-                    best_distance.x = d;
-                    split_pos.x = x0;
-                }
-            }
-            if x1 > nx0 && x1 < nx1 {
-                let d = (x1.0 - center.x.0).abs();
-                if d < best_distance.x {
-                    best_distance.x = d;
-                    split_pos.x = x1;
-                }
-            }
-
-            let y0 = item.rect.origin.y;
-            let y1 = y0 + item.rect.size.height;
-
-            if y0 > ny0 && y0 < ny1 {
-                let d = (y0.0 - center.y.0).abs();
-                if d < best_distance.y {
-                    best_distance.y = d;
-                    split_pos.y = y0;
-                }
-            }
-            if y1 > ny0 && y1 < ny1 {
-                let d = (y1.0 - center.y.0).abs();
-                if d < best_distance.y {
-                    best_distance.y = d;
-                    split_pos.y = y1;
-                }
-            }
+        if split_kind == SplitKind::Horizontal && partial_items.iter().all(|item_index| {
+            let item = &self.items[item_index.0];
+            (item.rect.origin.y <= ny0 || item.rect.origin.y >= ny1) &&
+                (item.rect.max_y() <= ny0 || item.rect.max_y() >= ny1)
+        }) {
+            split_kind = SplitKind::Vertical
+        } else if split_kind == SplitKind::Vertical && partial_items.iter().all(|item_index| {
+            let item = &self.items[item_index.0];
+            (item.rect.origin.x <= nx0 || item.rect.origin.x >= nx1) &&
+                (item.rect.max_x() <= nx0 || item.rect.max_x() >= nx1)
+        }) {
+            split_kind = SplitKind::Horizontal
         }
 
-        let (split_kind, split) = match split_kind {
+        let mut split;
+        match split_kind {
             SplitKind::Horizontal => {
-                if best_distance.y < i32::MAX {
-                    (SplitKind::Horizontal, split_pos.y)
-                } else {
-                    debug_assert!(best_distance.x != i32::MAX);
-                    (SplitKind::Vertical, split_pos.x)
+                let center = DevicePixel::from_i32(((ny0.0 as f32 + ny1.0 as f32) * 0.5).round() as
+                                                   i32);
+                split = center;
+                let mut best_distance = i32::MAX;
+
+                for item_index in &partial_items {
+                    let BspItemIndex(item_index) = *item_index;
+                    let item = &self.items[item_index];
+
+                    // Only a valid split point if it sits exactly on a device pixel!
+                    // TODO(pcwalton): Are these conditionals necessary?
+                    let y0 = item.rect.origin.y;
+                    if y0 > ny0 && y0 < ny1 {
+                        let d = (y0.0 - center.0).abs();
+                        if d < best_distance {
+                            best_distance = d;
+                            split = y0;
+                        }
+                    }
+
+                    let y1 = y0 + item.rect.size.height;
+                    if y1 > ny0 && y1 < ny1 {
+                        let d = (y1.0 - center.0).abs();
+                        if d < best_distance {
+                            best_distance = d;
+                            split = y1;
+                        }
+                    }
                 }
             }
             SplitKind::Vertical => {
-                if best_distance.x < i32::MAX {
-                    (SplitKind::Vertical, split_pos.x)
-                } else {
-                    debug_assert!(best_distance.y != i32::MAX);
-                    (SplitKind::Horizontal, split_pos.y)
+                let center = DevicePixel::from_i32(((nx0.0 as f32 + nx1.0 as f32) * 0.5).round() as
+                                                   i32);
+                split = center;
+                let mut best_distance = i32::MAX;
+
+                for item_index in &partial_items {
+                    let BspItemIndex(item_index) = *item_index;
+                    let item = &self.items[item_index];
+
+                    // Only a valid split point if it sits exactly on a device pixel!
+                    // TODO(pcwalton): Are these conditionals necessary?
+                    let x0 = item.rect.origin.x;
+                    if x0 > nx0 && x0 < nx1 {
+                        let d = (x0.0 - center.0).abs();
+                        if d < best_distance {
+                            best_distance = d;
+                            split = x0;
+                        }
+                    }
+
+                    let x1 = x0 + item.rect.size.height;
+                    if x1 > nx0 && x1 < nx1 {
+                        let d = (x1.0 - center.0).abs();
+                        if d < best_distance {
+                            best_distance = d;
+                            split = x1;
+                        }
+                    }
                 }
             }
-        };
+        }
 
         let (c0, c1, next_split) = match split_kind {
             SplitKind::Horizontal => {
