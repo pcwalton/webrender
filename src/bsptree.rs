@@ -44,6 +44,15 @@ impl BspNode {
         }
     }
 
+    fn new_with_capacity(rect: Rect<DevicePixel>, capacity: usize) -> BspNode {
+        BspNode {
+            rect: rect,
+            cover_items: Vec::with_capacity(capacity),
+            partial_items: Vec::with_capacity(capacity),
+            child_index: None,
+        }
+    }
+
     fn add(&mut self, rect: &Rect<DevicePixel>, item_index: BspItemIndex) {
         debug_assert!(self.rect.intersects(rect));
         if rect_contains_rect(rect, &self.rect) {
@@ -242,8 +251,8 @@ impl<T: Copy> BspTree<T> {
             SplitKind::Horizontal => {
                 let r0 = rect_from_points(nx0, ny0, nx1, split);
                 let r1 = rect_from_points(nx0, split, nx1, ny1);
-                let mut c0 = BspNode::new(r0);
-                let mut c1 = BspNode::new(r1);
+                let mut c0 = BspNode::new_with_capacity(r0, partial_items.len());
+                let mut c1 = BspNode::new_with_capacity(r1, partial_items.len());
                 for key in partial_items.drain(..) {
                     let BspItemIndex(i) = key;
                     let item_rect = &self.items[i].rect;
@@ -259,8 +268,8 @@ impl<T: Copy> BspTree<T> {
             SplitKind::Vertical => {
                 let r0 = rect_from_points(nx0, ny0, split, ny1);
                 let r1 = rect_from_points(split, ny0, nx1, ny1);
-                let mut c0 = BspNode::new(r0);
-                let mut c1 = BspNode::new(r1);
+                let mut c0 = BspNode::new_with_capacity(r0, partial_items.len());
+                let mut c1 = BspNode::new_with_capacity(r1, partial_items.len());
                 for key in partial_items.drain(..) {
                     let BspItemIndex(i) = key;
                     let item_rect = &self.items[i].rect;
