@@ -2164,7 +2164,7 @@ impl FrameBuilder {
                 if self.debug {
                     let color = ColorF::new(1.0, 0.0, 0.0, 1.0);
                     let debug_rect = DebugRect {
-                        label: String::new(),
+                        label: format!("{}", cover_indices.len()),
                         color: color,
                         rect: *rect,
                     };

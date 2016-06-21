@@ -1238,7 +1238,7 @@ impl Renderer {
     fn add_debug_rect(&mut self,
                       p0: Point2D<DevicePixel>,
                       p1: Point2D<DevicePixel>,
-                      _label: &str,
+                      label: &str,
                       c: &ColorF) {
         let tile_x0 = p0.x;
         let tile_y0 = p0.y;
@@ -1271,13 +1271,12 @@ impl Renderer {
                             tile_x1,
                             tile_y1,
                             c);//&ColorF::new(0.0, 0.0, 0.0, 1.0));
-        /*
         if label.len() > 0 {
-            self.debug.add_text((tile_x0 + tile_x1) * 0.5,
-                                (tile_y0 + tile_y1) * 0.5,
+            self.debug.add_text((tile_x0.0 as f32 + tile_x1.0 as f32) * 0.5,
+                                (tile_y0.0 as f32 + tile_y1.0 as f32) * 0.5,
                                 label,
                                 c);//&ColorF::new(0.0, 0.0, 0.0, 1.0));
-        }*/
+        }
     }
 
     fn draw_tile_frame(&mut self,
