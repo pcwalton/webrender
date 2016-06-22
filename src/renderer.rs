@@ -1080,7 +1080,7 @@ impl Renderer {
     }*/
 
     fn draw_prim_cache_pass(&mut self,
-                            pass: &Pass,
+                            render_pass: &Pass,
                             target_size: &Size2D<f32>) {
         self.device.bind_render_target(Some(self.text_composite_target));
         gl::viewport(0,
@@ -1098,139 +1098,120 @@ impl Renderer {
                                          ORTHO_NEAR_PLANE,
                                          ORTHO_FAR_PLANE);
 
-        if !pass.gradients.is_empty() {
-            self.device.bind_program(self.cs_gradient, &projection);
-            self.device.bind_vao(self.quad_vao_id);
+        for pass in &render_pass.prim_cache_passes {
+            if !pass.gradients.is_empty() {
+                self.device.bind_program(self.cs_gradient, &projection);
+                self.device.bind_vao(self.quad_vao_id);
 
-            // TODO(gw): Select chunk size based on max ubo size queried from device!
-            for chunk in pass.gradients.chunks(512) {
-                let ubos = gl::gen_buffers(1);
-                let ubo = ubos[0];
+                // TODO(gw): Select chunk size based on max ubo size queried from device!
+                for chunk in pass.gradients.chunks(512) {
+                    let ubos = gl::gen_buffers(1);
+                    let ubo = ubos[0];
 
-                gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
-                gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
+                    gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
+                    gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
+                    gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
 
-                self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
+                    self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
 
-                gl::delete_buffers(&ubos);
+                    gl::delete_buffers(&ubos);
+                }
             }
-        }
 
-/*
-        if !prim_cache.border_corners.is_empty() {
-            self.device.bind_program(self.cs_border_corner, &projection);
-            self.device.bind_vao(self.quad_vao_id);
+            if !pass.borders.is_empty() {
+                self.device.bind_program(self.cs_border, &projection);
+                self.device.bind_vao(self.quad_vao_id);
 
-            // TODO(gw): Select chunk size based on max ubo size queried from device!
-            for chunk in prim_cache.border_corners.chunks(1024) {
-                let ubos = gl::gen_buffers(1);
-                let ubo = ubos[0];
+                // TODO(gw): Select chunk size based on max ubo size queried from device!
+                for chunk in pass.borders.chunks(1024) {
+                    let ubos = gl::gen_buffers(1);
+                    let ubo = ubos[0];
 
-                gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
-                gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
+                    gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
+                    gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
+                    gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
 
-                self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
+                    self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
 
-                gl::delete_buffers(&ubos);
+                    gl::delete_buffers(&ubos);
+                }
             }
-        }
-*/
 
-        if !pass.borders.is_empty() {
-            self.device.bind_program(self.cs_border, &projection);
-            self.device.bind_vao(self.quad_vao_id);
+            if !pass.box_shadows.is_empty() {
+                self.device.bind_program(self.cs_box_shadow, &projection);
+                self.device.bind_vao(self.quad_vao_id);
 
-            // TODO(gw): Select chunk size based on max ubo size queried from device!
-            for chunk in pass.borders.chunks(1024) {
-                let ubos = gl::gen_buffers(1);
-                let ubo = ubos[0];
+                // TODO(gw): Select chunk size based on max ubo size queried from device!
+                for chunk in pass.box_shadows.chunks(1024) {
+                    let ubos = gl::gen_buffers(1);
+                    let ubo = ubos[0];
 
-                gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
-                gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
+                    gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
+                    gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
+                    gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
 
-                self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
+                    self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
 
-                gl::delete_buffers(&ubos);
+                    gl::delete_buffers(&ubos);
+                }
             }
-        }
 
-        if !pass.box_shadows.is_empty() {
-            self.device.bind_program(self.cs_box_shadow, &projection);
-            self.device.bind_vao(self.quad_vao_id);
+            if !pass.rectangles.is_empty() {
+                self.device.bind_program(self.cs_rectangle, &projection);
+                self.device.bind_vao(self.quad_vao_id);
 
-            // TODO(gw): Select chunk size based on max ubo size queried from device!
-            for chunk in pass.box_shadows.chunks(1024) {
-                let ubos = gl::gen_buffers(1);
-                let ubo = ubos[0];
+                // TODO(gw): Select chunk size based on max ubo size queried from device!
+                for chunk in pass.rectangles.chunks(1024) {
+                    let ubos = gl::gen_buffers(1);
+                    let ubo = ubos[0];
 
-                gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
-                gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
+                    gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
+                    gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
+                    gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
 
-                self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
+                    self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
 
-                gl::delete_buffers(&ubos);
+                    gl::delete_buffers(&ubos);
+                }
             }
-        }
 
-        if !pass.rectangles.is_empty() {
-            self.device.bind_program(self.cs_rectangle, &projection);
-            self.device.bind_vao(self.quad_vao_id);
+            if !pass.complex.is_empty() {
+                self.device.bind_program(self.cs_complex, &projection);
+                self.device.bind_vao(self.quad_vao_id);
 
-            // TODO(gw): Select chunk size based on max ubo size queried from device!
-            for chunk in pass.rectangles.chunks(1024) {
-                let ubos = gl::gen_buffers(1);
-                let ubo = ubos[0];
+                // TODO(gw): Select chunk size based on max ubo size queried from device!
+                for chunk in pass.complex.chunks(256) {
+                    let ubos = gl::gen_buffers(1);
+                    let ubo = ubos[0];
 
-                gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
-                gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
+                    gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
+                    gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
+                    gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
 
-                self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
+                    self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
 
-                gl::delete_buffers(&ubos);
+                    gl::delete_buffers(&ubos);
+                }
             }
-        }
 
-        if !pass.complex.is_empty() {
-            self.device.bind_program(self.cs_complex, &projection);
-            self.device.bind_vao(self.quad_vao_id);
+            if !pass.glyphs.is_empty() {
+                self.device.bind_program(self.cs_text, &projection);
+                self.device.bind_color_texture(render_pass.text_texture_id);
+                self.device.bind_vao(self.quad_vao_id);
 
-            // TODO(gw): Select chunk size based on max ubo size queried from device!
-            for chunk in pass.complex.chunks(256) {
-                let ubos = gl::gen_buffers(1);
-                let ubo = ubos[0];
+                // TODO(gw): Select chunk size based on max ubo size queried from device!
+                for chunk in pass.glyphs.chunks(1024) {
+                    let glyphs_ubos = gl::gen_buffers(1);
+                    let glyphs_ubo = glyphs_ubos[0];
 
-                gl::bind_buffer(gl::UNIFORM_BUFFER, ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
-                gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, ubo);
+                    gl::bind_buffer(gl::UNIFORM_BUFFER, glyphs_ubo);
+                    gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
+                    gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, glyphs_ubo);
 
-                self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
+                    self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
 
-                gl::delete_buffers(&ubos);
-            }
-        }
-
-        if !pass.glyphs.is_empty() {
-            self.device.bind_program(self.cs_text, &projection);
-            self.device.bind_color_texture(pass.text_texture_id);
-            self.device.bind_vao(self.quad_vao_id);
-
-            // TODO(gw): Select chunk size based on max ubo size queried from device!
-            for chunk in pass.glyphs.chunks(1024) {
-                let glyphs_ubos = gl::gen_buffers(1);
-                let glyphs_ubo = glyphs_ubos[0];
-
-                gl::bind_buffer(gl::UNIFORM_BUFFER, glyphs_ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, &chunk, gl::STATIC_DRAW);
-                gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_CACHE_ITEMS, glyphs_ubo);
-
-                self.device.draw_indexed_triangles_instanced_u16(6, chunk.len() as gl::GLint);
-
-                gl::delete_buffers(&glyphs_ubos);
+                    gl::delete_buffers(&glyphs_ubos);
+                }
             }
         }
     }

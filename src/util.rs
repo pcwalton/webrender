@@ -159,3 +159,40 @@ pub fn rect_from_points_f(x0: f32,
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     (b - a) * t + a
 }
+
+pub fn subtract_rect(rect: &Rect<DevicePixel>,
+                     other: &Rect<DevicePixel>,
+                     results: &mut Vec<Rect<DevicePixel>>) {
+    results.clear();
+
+    if rect.intersects(other) {
+        let rx0 = rect.origin.x;
+        let ry0 = rect.origin.y;
+        let rx1 = rx0 + rect.size.width;
+        let ry1 = ry0 + rect.size.height;
+
+        let ox0 = other.origin.x;
+        let oy0 = other.origin.y;
+        let ox1 = ox0 + other.size.width;
+        let oy1 = oy0 + other.size.height;
+
+        let r = rect_from_points(rx0, ry0, ox0, ry1);
+        if r.size.width.0 > 0 && r.size.height.0 > 0 {
+            results.push(r);
+        }
+        let r = rect_from_points(ox0, ry0, ox1, oy0);
+        if r.size.width.0 > 0 && r.size.height.0 > 0 {
+            results.push(r);
+        }
+        let r = rect_from_points(ox0, oy1, ox1, ry1);
+        if r.size.width.0 > 0 && r.size.height.0 > 0 {
+            results.push(r);
+        }
+        let r = rect_from_points(ox1, ry0, rx1, ry1);
+        if r.size.width.0 > 0 && r.size.height.0 > 0 {
+            results.push(r);
+        }
+    } else {
+        results.push(*rect);
+    }
+}
