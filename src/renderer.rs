@@ -3,23 +3,19 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use batch::RasterBatch;
-use bit_set::BitSet;
 use debug_render::DebugRenderer;
-use device::{Device, ProgramId, TextureId, UniformLocation, VertexFormat, GpuProfile};
-use device::{TextureFilter, VAOId, VertexUsageHint, FileWatcherHandler};
+use device::{Device, FileWatcherHandler, GpuProfile, OffscreenDevice, ProgramId, ProgramLoader};
+use device::{TextureFilter, TextureId, UniformLocation, VAOId, VertexFormat, VertexUsageHint};
 use euclid::{Matrix4D, Point2D, Rect, Size2D};
 use gleam::gl;
 use internal_types::{RendererFrame, ResultMsg, TextureUpdateOp};
 use internal_types::{TextureUpdateDetails, TextureUpdateList, PackedVertex, RenderTargetMode};
 use internal_types::{ORTHO_NEAR_PLANE, ORTHO_FAR_PLANE, DevicePixel};
-use internal_types::{PackedVertexForTextureCacheUpdate, CompositionOp, ChildLayerIndex};
-use internal_types::{AxisDirection, LowLevelFilterOp, ANGLE_FLOAT_TO_FIXED};
-use internal_types::{RenderTargetId};
+use internal_types::{AxisDirection, PackedVertexForTextureCacheUpdate, CompositionOp};
 use ipc_channel::ipc;
 use profiler::{Profiler, BackendProfileCounters};
 use profiler::{RendererProfileTimers, RendererProfileCounters};
 use render_backend::RenderBackend;
-use std::collections::{HashMap, HashSet};
 use std::f32;
 use std::mem;
 use std::path::PathBuf;
@@ -317,7 +313,13 @@ impl Renderer {
         let debug = options.debug;
         let (device_pixel_ratio, enable_aa) = (options.device_pixel_ratio, options.enable_aa);
         let payload_tx_for_backend = payload_tx.clone();
+        let program_loader = ProgramLoader::from_device(&device);
+        let stencil_routing = options.stencil_routing;
         thread::spawn(move || {
+            let offscreen_device = OffscreenDevice::new(program_loader).expect("Couldn't create \
+                                                                               an offscreen \
+                                                                               device for the \
+                                                                               render backend!");
             let mut backend = RenderBackend::new(api_rx,
                                                  payload_rx,
                                                  payload_tx_for_backend,
@@ -329,7 +331,9 @@ impl Renderer {
                                                  backend_notifier,
                                                  context_handle,
                                                  config,
-                                                 debug);
+                                                 offscreen_device,
+                                                 debug,
+                                                 stencil_routing);
             backend.run();
         });
 
@@ -1429,4 +1433,5 @@ pub struct RendererOptions {
     pub enable_msaa: bool,
     pub enable_profiler: bool,
     pub debug: bool,
+    pub stencil_routing: bool,
 }

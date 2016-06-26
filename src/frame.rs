@@ -19,6 +19,8 @@ use scene::{SceneStackingContext, ScenePipeline, Scene, SceneItem, SpecificScene
 use scoped_threadpool;
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasherDefault;
+use std::rc::Rc;
+use stencil_routing_tiling_strategy::StencilRoutingTilingStrategySharedState;
 use tiling::{Clip, ClipKind, FrameBuilder};
 use util::{MatrixHelpers};
 use webrender_traits::{AuxiliaryLists, PipelineId, Epoch, ScrollPolicy, ScrollLayerId};
@@ -74,6 +76,7 @@ pub struct Frame {
     id: FrameId,
     debug: bool,
     frame_builder: Option<FrameBuilder>,
+    stencil_routing_shared_state: Option<Rc<StencilRoutingTilingStrategySharedState>>,
 }
 
 enum SceneItemKind<'a> {
@@ -201,7 +204,9 @@ impl StackingContextHelpers for StackingContext {
 }
 
 impl Frame {
-    pub fn new(debug: bool) -> Frame {
+    pub fn new(debug: bool,
+               stencil_routing_shared_state: Option<Rc<StencilRoutingTilingStrategySharedState>>)
+               -> Frame {
         Frame {
             pipeline_epoch_map: HashMap::with_hasher(Default::default()),
             pipeline_auxiliary_lists: HashMap::with_hasher(Default::default()),
@@ -209,6 +214,7 @@ impl Frame {
             root_scroll_layer_id: None,
             id: FrameId(0),
             debug: debug,
+            stencil_routing_shared_state: stencil_routing_shared_state,
             frame_builder: None,
         }
     }
@@ -402,9 +408,11 @@ impl Frame {
 
                 // Work around borrow check on resource cache
                 {
-                    let mut frame_builder = FrameBuilder::new(root_pipeline.viewport_size,
-                                                              device_pixel_ratio,
-                                                              self.debug);
+                    let mut frame_builder =
+                        FrameBuilder::new(root_pipeline.viewport_size,
+                                          device_pixel_ratio,
+                                          self.debug,
+                                          self.stencil_routing_shared_state.clone());
 
                     {
                         let mut context = FlattenContext {

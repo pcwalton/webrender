@@ -2,13 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use euclid::Matrix4D;
+use euclid::{Matrix4D, Size2D};
 use fnv::FnvHasher;
 use gleam::gl;
 use internal_types::{PackedVertex, PackedVertexForQuad};
 use internal_types::{PackedVertexForTextureCacheUpdate, RenderTargetMode, TextureSampler};
 use internal_types::{VertexAttribute, DebugFontVertex, DebugColorVertex};
 //use notify::{self, Watcher};
+use offscreen_gl_context::{ColorAttachmentType, GLContext, GLContextAttributes, NativeGLContext};
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::BuildHasherDefault;
@@ -733,41 +734,15 @@ impl FileWatcherThread {
 }
 */
 
-pub struct Device {
-    // device state
-    bound_color_texture: TextureId,
-    bound_mask_texture: TextureId,
-    bound_layer_textures: [TextureId; 8],
-    bound_cache_texture: TextureId,
-    bound_program: ProgramId,
-    bound_vao: VAOId,
-    bound_fbo: FBOId,
-    default_fbo: gl::GLuint,
-    device_pixel_ratio: f32,
-
-    // debug
-    inside_frame: bool,
-
-    // resources
+pub struct ProgramLoader {
     resource_path: PathBuf,
-    textures: HashMap<TextureId, Texture, BuildHasherDefault<FnvHasher>>,
-    raw_textures: HashMap<TextureId, (u32, u32, u32, u32), BuildHasherDefault<FnvHasher>>,
     programs: HashMap<ProgramId, Program, BuildHasherDefault<FnvHasher>>,
-    vaos: HashMap<VAOId, VAO, BuildHasherDefault<FnvHasher>>,
-
-    // misc.
     shader_preamble: String,
-    //file_watcher: FileWatcherThread,
-
-    // Used on android only
-    #[allow(dead_code)]
-    next_vao_id: gl::GLuint,
+    device_pixel_ratio: f32,
 }
 
-impl Device {
-    pub fn new(resource_path: PathBuf,
-               device_pixel_ratio: f32,
-               _file_changed_handler: Box<FileWatcherHandler>) -> Device {
+impl ProgramLoader {
+    pub fn new(resource_path: PathBuf, device_pixel_ratio: f32) -> ProgramLoader {
         //let file_watcher = FileWatcherThread::new(file_changed_handler);
 
         let mut path = resource_path.clone();
@@ -777,37 +752,216 @@ impl Device {
         f.read_to_string(&mut shader_preamble).unwrap();
         //file_watcher.add_watch(path);
 
-        Device {
+        ProgramLoader {
             resource_path: resource_path,
-            device_pixel_ratio: device_pixel_ratio,
-            inside_frame: false,
-
-            bound_color_texture: TextureId(0),
-            bound_mask_texture: TextureId(0),
-            bound_cache_texture: TextureId(0),
-            bound_layer_textures: [ TextureId(0),
-                                    TextureId(0),
-                                    TextureId(0),
-                                    TextureId(0),
-                                    TextureId(0),
-                                    TextureId(0),
-                                    TextureId(0),
-                                    TextureId(0),
-                                  ],
-            bound_program: ProgramId(0),
-            bound_vao: VAOId(0),
-            bound_fbo: FBOId(0),
-            default_fbo: 0,
-
-            textures: HashMap::with_hasher(Default::default()),
-            raw_textures: HashMap::with_hasher(Default::default()),
             programs: HashMap::with_hasher(Default::default()),
-            vaos: HashMap::with_hasher(Default::default()),
-
             shader_preamble: shader_preamble,
+            device_pixel_ratio: device_pixel_ratio,
+        }
+    }
 
-            next_vao_id: 1,
-            //file_watcher: file_watcher,
+    pub fn from_device(device: &Device) -> ProgramLoader {
+        ProgramLoader {
+            resource_path: device.resource_path.clone(),
+            programs: HashMap::with_hasher(Default::default()),
+            shader_preamble: device.program_loader.shader_preamble.clone(),
+            device_pixel_ratio: device.device_pixel_ratio,
+        }
+    }
+
+    fn create_program(&mut self, base_filename: &str, include_filename: &str) -> ProgramId {
+        self.create_program_with_prefix(base_filename, Some(include_filename), None, true)
+    }
+
+    fn create_program_with_prefix(&mut self,
+                                  base_filename: &str,
+                                  include_filename: Option<&str>,
+                                  prefix: Option<String>,
+                                  include_shared: bool)
+                                  -> ProgramId {
+        let pid = gl::create_program();
+
+        let mut vs_path = self.resource_path.clone();
+        vs_path.push(&format!("{}.vs.glsl", base_filename));
+        //self.file_watcher.add_watch(vs_path.clone());
+
+        let mut fs_path = self.resource_path.clone();
+        fs_path.push(&format!("{}.fs.glsl", base_filename));
+        //self.file_watcher.add_watch(fs_path.clone());
+
+        let mut include = String::new();
+        if let Some(include_filename) = include_filename {
+            let mut include_path = self.resource_path.clone();
+            include_path.push(&format!("{}.glsl", include_filename));
+            let mut f = File::open(&include_path).unwrap();
+            f.read_to_string(&mut include).unwrap();
+        }
+
+        if include_shared {
+            let mut shared_path = self.resource_path.clone();
+            shared_path.push(&format!("{}.glsl", base_filename));
+            if let Ok(mut f) = File::open(&shared_path) {
+                let mut shared_code = String::new();
+                f.read_to_string(&mut shared_code).unwrap();
+                include.push_str(&shared_code);
+            }
+        }
+
+        let program = Program {
+            id: pid,
+            u_transform: -1,
+            vs_path: vs_path,
+            fs_path: fs_path,
+            prefix: prefix,
+            vs_id: None,
+            fs_id: None,
+        };
+
+        let program_id = ProgramId(pid);
+
+        debug_assert!(self.programs.contains_key(&program_id) == false);
+        self.programs.insert(program_id, program);
+
+        self.load_program(program_id, include, true, include_shared);
+
+        program_id
+    }
+
+    fn load_program(&mut self,
+                    program_id: ProgramId,
+                    include: String,
+                    panic_on_fail: bool,
+                    include_shared: bool) {
+        let program = self.programs.get_mut(&program_id).unwrap();
+
+        let mut vs_preamble = Vec::new();
+        let mut fs_preamble = Vec::new();
+
+        vs_preamble.push("#define WR_VERTEX_SHADER\n".to_owned());
+        fs_preamble.push("#define WR_FRAGMENT_SHADER\n".to_owned());
+
+        if let Some(ref prefix) = program.prefix {
+            vs_preamble.push(prefix.clone());
+            fs_preamble.push(prefix.clone());
+        }
+
+        if include_shared {
+            vs_preamble.push(self.shader_preamble.to_owned());
+            fs_preamble.push(self.shader_preamble.to_owned());
+        }
+
+        vs_preamble.push(include.clone());
+        fs_preamble.push(include);
+
+        // todo(gw): store shader ids so they can be freed!
+        let vs_id = ProgramLoader::compile_shader(&program.vs_path,
+                                                  gl::VERTEX_SHADER,
+                                                  &vs_preamble,
+                                                  panic_on_fail);
+        let fs_id = ProgramLoader::compile_shader(&program.fs_path,
+                                                  gl::FRAGMENT_SHADER,
+                                                  &fs_preamble,
+                                                  panic_on_fail);
+
+        match (vs_id, fs_id) {
+            (Some(vs_id), None) => {
+                println!("FAILED to load fs - falling back to previous!");
+                gl::delete_shader(vs_id);
+            }
+            (None, Some(fs_id)) => {
+                println!("FAILED to load vs - falling back to previous!");
+                gl::delete_shader(fs_id);
+            }
+            (None, None) => {
+                println!("FAILED to load vs/fs - falling back to previous!");
+            }
+            (Some(vs_id), Some(fs_id)) => {
+                if let Some(vs_id) = program.vs_id {
+                    gl::detach_shader(program.id, vs_id);
+                }
+
+                if let Some(fs_id) = program.fs_id {
+                    gl::detach_shader(program.id, fs_id);
+                }
+
+                if program.attach_and_bind_shaders(vs_id, fs_id, panic_on_fail) {
+                    if let Some(vs_id) = program.vs_id {
+                        gl::delete_shader(vs_id);
+                    }
+
+                    if let Some(fs_id) = program.fs_id {
+                        gl::delete_shader(fs_id);
+                    }
+
+                    program.vs_id = Some(vs_id);
+                    program.fs_id = Some(fs_id);
+                } else {
+                    let vs_id = program.vs_id.unwrap();
+                    let fs_id = program.fs_id.unwrap();
+                    program.attach_and_bind_shaders(vs_id, fs_id, true);
+                }
+
+                program.u_transform = gl::get_uniform_location(program.id, "uTransform");
+
+                program_id.bind();
+                let u_diffuse = gl::get_uniform_location(program.id, "sDiffuse");
+                if u_diffuse != -1 {
+                    gl::uniform_1i(u_diffuse, TextureSampler::Color as i32);
+                }
+                let u_mask = gl::get_uniform_location(program.id, "sMask");
+                if u_mask != -1 {
+                    gl::uniform_1i(u_mask, TextureSampler::Mask as i32);
+                }
+                let u_diffuse2d = gl::get_uniform_location(program.id, "sDiffuse2D");
+                if u_diffuse2d != -1 {
+                    gl::uniform_1i(u_diffuse2d, TextureSampler::Color as i32);
+                }
+                let u_mask2d = gl::get_uniform_location(program.id, "sMask2D");
+                if u_mask2d != -1 {
+                    gl::uniform_1i(u_mask2d, TextureSampler::Mask as i32);
+                }
+                let u_device_pixel_ratio = gl::get_uniform_location(program.id, "uDevicePixelRatio");
+                if u_device_pixel_ratio != -1 {
+                    gl::uniform_1f(u_device_pixel_ratio, self.device_pixel_ratio);
+                }
+
+                let u_layer0 = gl::get_uniform_location(program.id, "sLayer0");
+                if u_layer0 != -1 {
+                    gl::uniform_1i(u_layer0, TextureSampler::CompositeLayer0 as i32);
+                }
+                let u_layer1 = gl::get_uniform_location(program.id, "sLayer1");
+                if u_layer1 != -1 {
+                    gl::uniform_1i(u_layer1, TextureSampler::CompositeLayer1 as i32);
+                }
+                let u_layer2 = gl::get_uniform_location(program.id, "sLayer2");
+                if u_layer2 != -1 {
+                    gl::uniform_1i(u_layer2, TextureSampler::CompositeLayer2 as i32);
+                }
+                let u_layer3 = gl::get_uniform_location(program.id, "sLayer3");
+                if u_layer3 != -1 {
+                    gl::uniform_1i(u_layer3, TextureSampler::CompositeLayer3 as i32);
+                }
+                let u_layer4 = gl::get_uniform_location(program.id, "sLayer4");
+                if u_layer4 != -1 {
+                    gl::uniform_1i(u_layer4, TextureSampler::CompositeLayer4 as i32);
+                }
+                let u_layer5 = gl::get_uniform_location(program.id, "sLayer5");
+                if u_layer5 != -1 {
+                    gl::uniform_1i(u_layer5, TextureSampler::CompositeLayer5 as i32);
+                }
+                let u_layer6 = gl::get_uniform_location(program.id, "sLayer6");
+                if u_layer6 != -1 {
+                    gl::uniform_1i(u_layer6, TextureSampler::CompositeLayer6 as i32);
+                }
+                let u_layer7 = gl::get_uniform_location(program.id, "sLayer7");
+                if u_layer7 != -1 {
+                    gl::uniform_1i(u_layer7, TextureSampler::CompositeLayer7 as i32);
+                }
+                let u_cache = gl::get_uniform_location(program.id, "sCache");
+                if u_cache != -1 {
+                    gl::uniform_1i(u_cache, TextureSampler::Cache as i32);
+                }
+            }
         }
     }
 
@@ -841,6 +995,76 @@ impl Device {
         } else {
             //println!("{}", gl::get_shader_info_log(id));
             Some(id)
+        }
+    }
+}
+
+pub struct Device {
+    // device state
+    bound_color_texture: TextureId,
+    bound_mask_texture: TextureId,
+    bound_layer_textures: [TextureId; 8],
+    bound_cache_texture: TextureId,
+    bound_program: ProgramId,
+    bound_vao: VAOId,
+    bound_fbo: FBOId,
+    default_fbo: gl::GLuint,
+    device_pixel_ratio: f32,
+
+    // program loader
+    program_loader: ProgramLoader,
+
+    // debug
+    inside_frame: bool,
+
+    // resources
+    resource_path: PathBuf,
+    textures: HashMap<TextureId, Texture, BuildHasherDefault<FnvHasher>>,
+    raw_textures: HashMap<TextureId, (u32, u32, u32, u32), BuildHasherDefault<FnvHasher>>,
+    vaos: HashMap<VAOId, VAO, BuildHasherDefault<FnvHasher>>,
+
+    // misc.
+    //file_watcher: FileWatcherThread,
+
+    // Used on android only
+    #[allow(dead_code)]
+    next_vao_id: gl::GLuint,
+}
+
+impl Device {
+    pub fn new(resource_path: PathBuf,
+               device_pixel_ratio: f32,
+               _file_changed_handler: Box<FileWatcherHandler>) -> Device {
+        Device {
+            resource_path: resource_path.clone(),
+            device_pixel_ratio: device_pixel_ratio,
+            inside_frame: false,
+
+            program_loader: ProgramLoader::new(resource_path, device_pixel_ratio),
+
+            bound_color_texture: TextureId(0),
+            bound_mask_texture: TextureId(0),
+            bound_cache_texture: TextureId(0),
+            bound_layer_textures: [ TextureId(0),
+                                    TextureId(0),
+                                    TextureId(0),
+                                    TextureId(0),
+                                    TextureId(0),
+                                    TextureId(0),
+                                    TextureId(0),
+                                    TextureId(0),
+                                  ],
+            bound_program: ProgramId(0),
+            bound_vao: VAOId(0),
+            bound_fbo: FBOId(0),
+            default_fbo: 0,
+
+            textures: HashMap::with_hasher(Default::default()),
+            raw_textures: HashMap::with_hasher(Default::default()),
+            vaos: HashMap::with_hasher(Default::default()),
+
+            next_vao_id: 1,
+            //file_watcher: file_watcher,
         }
     }
 
@@ -954,9 +1178,10 @@ impl Device {
             program_id.bind();
         }
 
-        let program = self.programs.get(&program_id).unwrap();
+        let program = self.program_loader.programs.get(&program_id).unwrap();
         self.set_uniforms(program, projection);
     }
+
 
     pub fn create_texture_ids(&mut self, count: i32) -> Vec<TextureId> {
         let id_list = gl::gen_textures(count);
@@ -982,6 +1207,10 @@ impl Device {
         }
 
         texture_ids
+    }
+
+    pub fn create_program(&mut self, base_filename: &str, include_filename: &str) -> ProgramId {
+        self.program_loader.create_program(base_filename, include_filename)
     }
 
     pub fn get_texture_dimensions(&self, texture_id: TextureId) -> (u32, u32) {
@@ -1196,199 +1425,6 @@ impl Device {
         texture.width = 0;
         texture.height = 0;
         texture.fbo_ids.clear();
-    }
-
-    pub fn create_program(&mut self,
-                          base_filename: &str,
-                          include_filename: &str) -> ProgramId {
-        self.create_program_with_prefix(base_filename, include_filename, None)
-    }
-
-    pub fn create_program_with_prefix(&mut self,
-                                      base_filename: &str,
-                                      include_filename: &str,
-                                      prefix: Option<String>) -> ProgramId {
-        debug_assert!(self.inside_frame);
-
-        let pid = gl::create_program();
-
-        let mut vs_path = self.resource_path.clone();
-        vs_path.push(&format!("{}.vs.glsl", base_filename));
-        //self.file_watcher.add_watch(vs_path.clone());
-
-        let mut fs_path = self.resource_path.clone();
-        fs_path.push(&format!("{}.fs.glsl", base_filename));
-        //self.file_watcher.add_watch(fs_path.clone());
-
-        let mut include_path = self.resource_path.clone();
-        include_path.push(&format!("{}.glsl", include_filename));
-        let mut f = File::open(&include_path).unwrap();
-        let mut include = String::new();
-        f.read_to_string(&mut include).unwrap();
-
-        let mut shared_path = self.resource_path.clone();
-        shared_path.push(&format!("{}.glsl", base_filename));
-        if let Ok(mut f) = File::open(&shared_path) {
-            let mut shared_code = String::new();
-            f.read_to_string(&mut shared_code).unwrap();
-            include.push_str(&shared_code);
-        }
-
-        let program = Program {
-            id: pid,
-            u_transform: -1,
-            vs_path: vs_path,
-            fs_path: fs_path,
-            prefix: prefix,
-            vs_id: None,
-            fs_id: None,
-        };
-
-        let program_id = ProgramId(pid);
-
-        debug_assert!(self.programs.contains_key(&program_id) == false);
-        self.programs.insert(program_id, program);
-
-        self.load_program(program_id, include, true);
-
-        program_id
-    }
-
-    fn load_program(&mut self,
-                    program_id: ProgramId,
-                    include: String,
-                    panic_on_fail: bool) {
-        debug_assert!(self.inside_frame);
-
-        let program = self.programs.get_mut(&program_id).unwrap();
-
-        let mut vs_preamble = Vec::new();
-        let mut fs_preamble = Vec::new();
-
-        vs_preamble.push("#define WR_VERTEX_SHADER\n".to_owned());
-        fs_preamble.push("#define WR_FRAGMENT_SHADER\n".to_owned());
-
-        if let Some(ref prefix) = program.prefix {
-            vs_preamble.push(prefix.clone());
-            fs_preamble.push(prefix.clone());
-        }
-
-        vs_preamble.push(self.shader_preamble.to_owned());
-        fs_preamble.push(self.shader_preamble.to_owned());
-
-        vs_preamble.push(include.clone());
-        fs_preamble.push(include);
-
-        // todo(gw): store shader ids so they can be freed!
-        let vs_id = Device::compile_shader(&program.vs_path,
-                                           gl::VERTEX_SHADER,
-                                           &vs_preamble,
-                                           panic_on_fail);
-        let fs_id = Device::compile_shader(&program.fs_path,
-                                           gl::FRAGMENT_SHADER,
-                                           &fs_preamble,
-                                           panic_on_fail);
-
-        match (vs_id, fs_id) {
-            (Some(vs_id), None) => {
-                println!("FAILED to load fs - falling back to previous!");
-                gl::delete_shader(vs_id);
-            }
-            (None, Some(fs_id)) => {
-                println!("FAILED to load vs - falling back to previous!");
-                gl::delete_shader(fs_id);
-            }
-            (None, None) => {
-                println!("FAILED to load vs/fs - falling back to previous!");
-            }
-            (Some(vs_id), Some(fs_id)) => {
-                if let Some(vs_id) = program.vs_id {
-                    gl::detach_shader(program.id, vs_id);
-                }
-
-                if let Some(fs_id) = program.fs_id {
-                    gl::detach_shader(program.id, fs_id);
-                }
-
-                if program.attach_and_bind_shaders(vs_id, fs_id, panic_on_fail) {
-                    if let Some(vs_id) = program.vs_id {
-                        gl::delete_shader(vs_id);
-                    }
-
-                    if let Some(fs_id) = program.fs_id {
-                        gl::delete_shader(fs_id);
-                    }
-
-                    program.vs_id = Some(vs_id);
-                    program.fs_id = Some(fs_id);
-                } else {
-                    let vs_id = program.vs_id.unwrap();
-                    let fs_id = program.fs_id.unwrap();
-                    program.attach_and_bind_shaders(vs_id, fs_id, true);
-                }
-
-                program.u_transform = gl::get_uniform_location(program.id, "uTransform");
-
-                program_id.bind();
-                let u_diffuse = gl::get_uniform_location(program.id, "sDiffuse");
-                if u_diffuse != -1 {
-                    gl::uniform_1i(u_diffuse, TextureSampler::Color as i32);
-                }
-                let u_mask = gl::get_uniform_location(program.id, "sMask");
-                if u_mask != -1 {
-                    gl::uniform_1i(u_mask, TextureSampler::Mask as i32);
-                }
-                let u_diffuse2d = gl::get_uniform_location(program.id, "sDiffuse2D");
-                if u_diffuse2d != -1 {
-                    gl::uniform_1i(u_diffuse2d, TextureSampler::Color as i32);
-                }
-                let u_mask2d = gl::get_uniform_location(program.id, "sMask2D");
-                if u_mask2d != -1 {
-                    gl::uniform_1i(u_mask2d, TextureSampler::Mask as i32);
-                }
-                let u_device_pixel_ratio = gl::get_uniform_location(program.id, "uDevicePixelRatio");
-                if u_device_pixel_ratio != -1 {
-                    gl::uniform_1f(u_device_pixel_ratio, self.device_pixel_ratio);
-                }
-
-                let u_layer0 = gl::get_uniform_location(program.id, "sLayer0");
-                if u_layer0 != -1 {
-                    gl::uniform_1i(u_layer0, TextureSampler::CompositeLayer0 as i32);
-                }
-                let u_layer1 = gl::get_uniform_location(program.id, "sLayer1");
-                if u_layer1 != -1 {
-                    gl::uniform_1i(u_layer1, TextureSampler::CompositeLayer1 as i32);
-                }
-                let u_layer2 = gl::get_uniform_location(program.id, "sLayer2");
-                if u_layer2 != -1 {
-                    gl::uniform_1i(u_layer2, TextureSampler::CompositeLayer2 as i32);
-                }
-                let u_layer3 = gl::get_uniform_location(program.id, "sLayer3");
-                if u_layer3 != -1 {
-                    gl::uniform_1i(u_layer3, TextureSampler::CompositeLayer3 as i32);
-                }
-                let u_layer4 = gl::get_uniform_location(program.id, "sLayer4");
-                if u_layer4 != -1 {
-                    gl::uniform_1i(u_layer4, TextureSampler::CompositeLayer4 as i32);
-                }
-                let u_layer5 = gl::get_uniform_location(program.id, "sLayer5");
-                if u_layer5 != -1 {
-                    gl::uniform_1i(u_layer5, TextureSampler::CompositeLayer5 as i32);
-                }
-                let u_layer6 = gl::get_uniform_location(program.id, "sLayer6");
-                if u_layer6 != -1 {
-                    gl::uniform_1i(u_layer6, TextureSampler::CompositeLayer6 as i32);
-                }
-                let u_layer7 = gl::get_uniform_location(program.id, "sLayer7");
-                if u_layer7 != -1 {
-                    gl::uniform_1i(u_layer7, TextureSampler::CompositeLayer7 as i32);
-                }
-                let u_cache = gl::get_uniform_location(program.id, "sCache");
-                if u_cache != -1 {
-                    gl::uniform_1i(u_cache, TextureSampler::Cache as i32);
-                }
-            }
-        }
     }
 
 /*
@@ -1686,3 +1722,31 @@ impl Drop for Device {
         //self.file_watcher.exit();
     }
 }
+
+pub struct OffscreenDevice {
+    context: GLContext<NativeGLContext>,
+    program_loader: ProgramLoader,
+}
+
+impl OffscreenDevice {
+    pub fn new(program_loader: ProgramLoader) -> Result<OffscreenDevice, &'static str> {
+        let context = try!(GLContext::<NativeGLContext>::new(Size2D::new(16, 16),
+                                                             GLContextAttributes::any(),
+                                                             ColorAttachmentType::Texture,
+                                                             true,
+                                                             None));
+        Ok(OffscreenDevice {
+            context: context,
+            program_loader: program_loader,
+        })
+    }
+
+    pub fn make_current(&self) -> Result<(), &'static str> {
+        self.context.make_current()
+    }
+
+    pub fn create_program(&mut self, base_filename: &str) -> ProgramId {
+        self.program_loader.create_program_with_prefix(base_filename, None, None, false)
+    }
+}
+

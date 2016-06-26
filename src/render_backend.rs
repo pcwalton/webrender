@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use byteorder::{LittleEndian, ReadBytesExt};
+use device::OffscreenDevice;
 use euclid::Matrix4D;
 use frame::Frame;
 use internal_types::{FontTemplate, ResultMsg, RendererFrame};
@@ -13,8 +14,10 @@ use scene::Scene;
 use scoped_threadpool;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
+use stencil_routing_tiling_strategy::StencilRoutingTilingStrategySharedState;
 use texture_cache::{TextureCache, TextureCacheItemId};
 use tiling::FrameBuilderConfig;
 use webrender_traits::{ApiMsg, AuxiliaryLists, BuiltDisplayList, IdNamespace, RenderNotifier};
@@ -56,7 +59,10 @@ impl RenderBackend {
                notifier: Arc<Mutex<Option<Box<RenderNotifier>>>>,
                webrender_context_handle: Option<NativeGLContextHandle>,
                _config: FrameBuilderConfig,
-               debug: bool) -> RenderBackend {
+               device: OffscreenDevice,
+               debug: bool,
+               stencil_routing: bool)
+               -> RenderBackend {
         let mut thread_pool = scoped_threadpool::Pool::new(8);
 
         let resource_cache = ResourceCache::new(&mut thread_pool,
@@ -64,6 +70,12 @@ impl RenderBackend {
                                                 white_image_id,
                                                 device_pixel_ratio,
                                                 enable_aa);
+
+        let stencil_routing_shared_state = if stencil_routing {
+            Some(Rc::new(StencilRoutingTilingStrategySharedState::new(device)))
+        } else {
+            None
+        };
 
         RenderBackend {
             thread_pool: thread_pool,
@@ -74,7 +86,7 @@ impl RenderBackend {
             device_pixel_ratio: device_pixel_ratio,
             resource_cache: resource_cache,
             scene: Scene::new(),
-            frame: Frame::new(debug),
+            frame: Frame::new(debug, stencil_routing_shared_state),
             next_namespace_id: IdNamespace(1),
             notifier: notifier,
             webrender_context_handle: webrender_context_handle,
@@ -275,7 +287,12 @@ impl RenderBackend {
                         }
                         ApiMsg::RequestWebGLContext(size, attributes, tx) => {
                             if let Some(ref handle) = self.webrender_context_handle {
-                                match GLContext::<NativeGLContext>::new(size, attributes, ColorAttachmentType::Texture, Some(handle)) {
+                                match GLContext::<NativeGLContext>::new(
+                                        size,
+                                        attributes,
+                                        ColorAttachmentType::Texture,
+                                        false,
+                                        Some(handle)) {
                                     Ok(ctx) => {
                                         let id = WebGLContextId(new_id());
 

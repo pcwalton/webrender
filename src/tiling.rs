@@ -15,10 +15,13 @@ use renderer::{BLUR_INFLATION_FACTOR};
 use resource_cache::ResourceCache;
 use resource_list::ResourceList;
 use std::cmp;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::f32;
+use std::hash::BuildHasherDefault;
 use std::mem;
-use std::hash::{BuildHasherDefault};
+use std::rc::Rc;
+use stencil_routing_tiling_strategy::{StencilRoutingTilingStrategy};
+use stencil_routing_tiling_strategy::{StencilRoutingTilingStrategySharedState};
 use texture_cache::{TexturePage, TextureCacheItem};
 use util::{self, rect_from_points, rect_from_points_f, MatrixHelpers, subtract_rect};
 use webrender_traits::{ColorF, FontKey, ImageKey, ImageRendering, ComplexClipRegion};
@@ -1853,12 +1856,15 @@ pub struct FrameBuilder {
     clip_stack: Vec<ClipIndex>,
     device_pixel_ratio: f32,
     debug: bool,
+    stencil_routing_shared_state: Option<Rc<StencilRoutingTilingStrategySharedState>>,
 }
 
 impl FrameBuilder {
     pub fn new(viewport_size: Size2D<f32>,
                device_pixel_ratio: f32,
-               debug: bool) -> FrameBuilder {
+               debug: bool,
+               stencil_routing_shared_state: Option<Rc<StencilRoutingTilingStrategySharedState>>)
+               -> FrameBuilder {
         let viewport_size = Size2D::new(viewport_size.width as i32, viewport_size.height as i32);
         FrameBuilder {
             screen_rect: Rect::new(Point2D::zero(), viewport_size),
@@ -1866,6 +1872,7 @@ impl FrameBuilder {
             layer_stack: Vec::new(),
             device_pixel_ratio: device_pixel_ratio,
             debug: debug,
+            stencil_routing_shared_state: stencil_routing_shared_state,
             clips: Vec::new(),
             clip_stack: Vec::new(),
         }
@@ -2182,12 +2189,27 @@ impl FrameBuilder {
         resource_cache.add_resource_list(&resource_list, frame_id);
         resource_cache.raster_pending_glyphs(frame_id);
 
-        let tiling_strategy = BspTilingStrategy::new(&screen_rect, self.device_pixel_ratio);
-        self.create_frame_with_tiling_strategy(resource_cache,
-                                               frame_id,
-                                               pipeline_auxiliary_lists,
-                                               layer_ubo,
-                                               tiling_strategy)
+        match self.stencil_routing_shared_state.clone() {
+            None => {
+                let tiling_strategy = BspTilingStrategy::new(&screen_rect,
+                                                             self.device_pixel_ratio);
+                self.create_frame_with_tiling_strategy(resource_cache,
+                                                       frame_id,
+                                                       pipeline_auxiliary_lists,
+                                                       layer_ubo,
+                                                       tiling_strategy)
+            }
+            Some(stencil_routing_shared_state) => {
+                let tiling_strategy =
+                    StencilRoutingTilingStrategy::new(stencil_routing_shared_state,
+                                                      &screen_rect.size);
+                self.create_frame_with_tiling_strategy(resource_cache,
+                                                       frame_id,
+                                                       pipeline_auxiliary_lists,
+                                                       layer_ubo,
+                                                       tiling_strategy)
+            }
+        }
     }
 
     fn create_frame_with_tiling_strategy<S>(&mut self,
@@ -2283,18 +2305,6 @@ impl FrameBuilder {
                     });
                     return;
                 }
-
-                /*
-                if !partial_indices.is_empty() {
-                    error_tiles.push(ErrorTile {
-                        rect: *rect,
-                    });
-                    return;
-                }
-
-                cover_indices.sort_by(|a, b| {
-                    b.cmp(&a)
-                });*/
 
                 if self.debug {
                     let color = ColorF::new(1.0, 0.0, 0.0, 1.0);

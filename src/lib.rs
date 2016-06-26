@@ -30,6 +30,7 @@ mod resource_cache;
 mod resource_list;
 mod scene;
 mod spring;
+mod stencil_routing_tiling_strategy;
 mod texture_cache;
 mod tiling;
 mod util;
