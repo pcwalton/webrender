@@ -315,6 +315,7 @@ impl Renderer {
         let config = FrameBuilderConfig::new();
 
         let debug = options.debug;
+        let simd = options.simd;
         let (device_pixel_ratio, enable_aa) = (options.device_pixel_ratio, options.enable_aa);
         let payload_tx_for_backend = payload_tx.clone();
         thread::spawn(move || {
@@ -329,7 +330,8 @@ impl Renderer {
                                                  backend_notifier,
                                                  context_handle,
                                                  config,
-                                                 debug);
+                                                 debug,
+                                                 simd);
             backend.run();
         });
 
@@ -1312,9 +1314,9 @@ impl Renderer {
                                      None);
         }
 
+        //println!("starting drawing...");
         for pass in &frame.passes {
-            self.draw_prim_cache_pass(pass,
-                                      &frame.prim_cache_size);
+            self.draw_prim_cache_pass(pass, &frame.prim_cache_size);
 
             self.device.bind_render_target(None);
             gl::viewport(0, 0, framebuffer_size.width as i32, framebuffer_size.height as i32);
@@ -1327,6 +1329,10 @@ impl Renderer {
                 gl::bind_buffer(gl::UNIFORM_BUFFER, prim_ubo);
                 gl::buffer_data(gl::UNIFORM_BUFFER, &tile_batch.primitives, gl::STATIC_DRAW);
                 gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_PRIMITIVES, prim_ubo);
+                /*println!("tile batch primitives:");
+                for (i, primitive) in tile_batch.primitives.iter().enumerate() {
+                    println!("... {}={:?}", i, primitive);
+                }*/
 
                 for (key, tiles) in &tile_batch.batches {
                     let shader = self.composite_shaders[key.shader as usize];
@@ -1348,6 +1354,12 @@ impl Renderer {
                         gl::buffer_data(gl::UNIFORM_BUFFER, &batch, gl::STATIC_DRAW);
                         gl::bind_buffer_base(gl::UNIFORM_BUFFER, UBO_BIND_COMPOSITE_TILES, ubo);
 
+                        /*println!("... drawing batch (shader {:?}), len: {:?}",
+                                 key.shader as usize,
+                                 batch.len());
+                        for composite_tile in batch {
+                            println!("... ... {:?}", composite_tile);
+                        }*/
                         self.device.draw_indexed_triangles_instanced_u16(6, batch.len() as i32);
                         self.profile_counters.vertices.add(6 * batch.len());
                         self.profile_counters.draw_calls.inc();
@@ -1429,4 +1441,5 @@ pub struct RendererOptions {
     pub enable_msaa: bool,
     pub enable_profiler: bool,
     pub debug: bool,
+    pub simd: bool,
 }

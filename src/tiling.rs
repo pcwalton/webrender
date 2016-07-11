@@ -14,18 +14,53 @@ use layer::Layer;
 use renderer::{BLUR_INFLATION_FACTOR};
 use resource_cache::ResourceCache;
 use resource_list::ResourceList;
+use simd_tiling_strategy::{SimdTilingStrategy, TILE_SIZE};
 use std::cmp;
-use std::collections::{HashMap};
+use std::collections::{HashMap, HashSet};
 use std::f32;
 use std::mem;
 use std::hash::{BuildHasherDefault};
 use texture_cache::{TexturePage, TextureCacheItem};
-use util::{self, rect_from_points, rect_from_points_f, MatrixHelpers, subtract_rect};
+use util::{self, rect_from_points, MatrixHelpers, subtract_rect};
 use webrender_traits::{ColorF, FontKey, ImageKey, ImageRendering, ComplexClipRegion};
 use webrender_traits::{BorderDisplayItem, BorderStyle, ItemRange, AuxiliaryLists, BorderRadius};
 use webrender_traits::{BoxShadowClipMode, PipelineId, ScrollLayerId};
 
 const INVALID_LAYER_INDEX: u32 = 0xffffffff;
+
+const PRIMITIVE_CACHE_SIZE: DevicePixel = DevicePixel(2048);
+
+static DUMMY_COMPOSITE_PRIMITIVE: CompositePrimitive = CompositePrimitive {
+    bounding_rect: Rect {
+        origin: Point2D {
+            x: DevicePixel(0),
+            y: DevicePixel(0),
+        },
+        size: Size2D {
+            width: DevicePixel(0),
+            height: DevicePixel(0),
+        },
+    },
+    st0: Point2D {
+        x: 0.0,
+        y: 0.0,
+    },
+    st1: Point2D {
+        x: 0.0,
+        y: 0.0,
+    },
+};
+
+static ZERO_SAMPLERS: [TextureId; MAX_PRIMS_PER_COMPOSITE] = [
+    TextureId(0),
+    TextureId(0),
+    TextureId(0),
+    TextureId(0),
+    TextureId(0),
+    TextureId(0),
+    TextureId(0),
+    TextureId(0),
+];
 
 pub enum BuiltTile<'a> {
     Tile(&'a mut Vec<RenderableInstanceId>),
@@ -33,14 +68,67 @@ pub enum BuiltTile<'a> {
 }
 
 pub trait TilingStrategy {
+    fn reset(&mut self, screen_rect: &Rect<DevicePixel>, device_pixel_ratio: f32);
     fn add_renderables(&mut self, rlist: &RenderableList);
     fn region_count(&mut self) -> usize;
-    fn get_tile_range(&self, rect: &Rect<DevicePixel>) -> TileRange;
     fn build_and_process_tiles<F>(&mut self, region_index: usize, iteration_function: F)
                                   where F: for<'a> FnMut(Rect<DevicePixel>,
                                                          BuiltTile<'a>,
                                                          &'a mut Vec<RenderableId>);
     fn instances(&mut self, region_index: usize) -> &mut Vec<RenderableId>;
+}
+
+pub enum SpecifiedTilingStrategy {
+    Bsp(BspTilingStrategy),
+    Simd(SimdTilingStrategy),
+}
+
+impl TilingStrategy for SpecifiedTilingStrategy {
+    fn reset(&mut self, screen_rect: &Rect<DevicePixel>, device_pixel_ratio: f32) {
+        match *self {
+            SpecifiedTilingStrategy::Bsp(ref mut strategy) => {
+                strategy.reset(screen_rect, device_pixel_ratio)
+            }
+            SpecifiedTilingStrategy::Simd(ref mut strategy) => {
+                strategy.reset(screen_rect, device_pixel_ratio)
+            }
+        }
+    }
+
+    fn add_renderables(&mut self, rlist: &RenderableList) {
+        match *self {
+            SpecifiedTilingStrategy::Bsp(ref mut strategy) => strategy.add_renderables(rlist),
+            SpecifiedTilingStrategy::Simd(ref mut strategy) => strategy.add_renderables(rlist),
+        }
+    }
+
+    fn region_count(&mut self) -> usize {
+        match *self {
+            SpecifiedTilingStrategy::Bsp(ref mut strategy) => strategy.region_count(),
+            SpecifiedTilingStrategy::Simd(ref mut strategy) => strategy.region_count(),
+        }
+    }
+
+    fn build_and_process_tiles<F>(&mut self, region_index: usize, iteration_function: F)
+                                  where F: for<'a> FnMut(Rect<DevicePixel>,
+                                                         BuiltTile<'a>,
+                                                         &'a mut Vec<RenderableId>) {
+        match *self {
+            SpecifiedTilingStrategy::Bsp(ref mut strategy) => {
+                strategy.build_and_process_tiles(region_index, iteration_function)
+            }
+            SpecifiedTilingStrategy::Simd(ref mut strategy) => {
+                strategy.build_and_process_tiles(region_index, iteration_function)
+            }
+        }
+    }
+
+    fn instances(&mut self, region_index: usize) -> &mut Vec<RenderableId> {
+        match *self {
+            SpecifiedTilingStrategy::Bsp(ref mut strategy) => strategy.instances(region_index),
+            SpecifiedTilingStrategy::Simd(ref mut strategy) => strategy.instances(region_index),
+        }
+    }
 }
 
 fn project_point(point: Point2D<f32>,
@@ -148,7 +236,7 @@ pub enum CompositeShader {
 #[derive(Debug, Clone)]
 pub struct CompositeTile {
     pub rect: Rect<DevicePixel>,
-    pub prim_indices: [RenderableInstanceId; MAX_PRIMS_PER_COMPOSITE],
+    pub prim_indices: [RenderableId; MAX_PRIMS_PER_COMPOSITE],
     pub layer_indices: [u32; MAX_PRIMS_PER_COMPOSITE],
 }
 
@@ -170,10 +258,7 @@ impl CompositeTile {
         }
     }
 
-    fn set_primitive(&mut self,
-                     cmd_index: usize,
-                     prim_index: RenderableInstanceId,
-                     layer_index: u32) {
+    fn set_primitive(&mut self, cmd_index: usize, prim_index: RenderableId, layer_index: u32) {
         self.prim_indices[cmd_index] = prim_index;
         self.layer_indices[cmd_index] = layer_index;
     }
@@ -379,10 +464,10 @@ impl Primitive {
                                       details.radius.bottom_left.height == 0.0;
 
                     if same_color && zero_radius {
-                        let top_rect = rect_from_points_f(details.tl_outer.x,
-                                                          details.tl_outer.y,
-                                                          details.tr_outer.x,
-                                                          details.tr_inner.y);
+                        let top_rect = rect_from_points(details.tl_outer.x,
+                                                        details.tl_outer.y,
+                                                        details.tr_outer.x,
+                                                        details.tr_inner.y);
 
                         let top_xf_rect = TransformedRect::new(&top_rect,
                                                                transform,
@@ -393,10 +478,10 @@ impl Primitive {
                                               prim_index,
                                               &details.top_color);
 
-                        let left_rect = rect_from_points_f(details.tl_outer.x,
-                                                           details.tl_inner.y,
-                                                           details.bl_inner.x,
-                                                           details.bl_inner.y);
+                        let left_rect = rect_from_points(details.tl_outer.x,
+                                                         details.tl_inner.y,
+                                                         details.bl_inner.x,
+                                                         details.bl_inner.y);
 
                         let left_xf_rect = TransformedRect::new(&left_rect,
                                                                 transform,
@@ -407,10 +492,10 @@ impl Primitive {
                                               prim_index,
                                               &details.left_color);
 
-                        let right_rect = rect_from_points_f(details.tr_inner.x,
-                                                            details.tr_inner.y,
-                                                            details.br_outer.x,
-                                                            details.br_inner.y);
+                        let right_rect = rect_from_points(details.tr_inner.x,
+                                                          details.tr_inner.y,
+                                                          details.br_outer.x,
+                                                          details.br_inner.y);
 
                         let right_xf_rect = TransformedRect::new(&right_rect,
                                                                  transform,
@@ -421,10 +506,10 @@ impl Primitive {
                                               prim_index,
                                               &details.right_color);
 
-                        let bottom_rect = rect_from_points_f(details.bl_outer.x,
-                                                             details.bl_inner.y,
-                                                             details.br_outer.x,
-                                                             details.br_outer.y);
+                        let bottom_rect = rect_from_points(details.bl_outer.x,
+                                                           details.bl_inner.y,
+                                                           details.br_outer.x,
+                                                           details.br_outer.y);
 
                         let bottom_xf_rect = TransformedRect::new(&bottom_rect,
                                                                   transform,
@@ -436,42 +521,42 @@ impl Primitive {
                                               &details.bottom_color);
 
                     } else {
-                        let c0 = rect_from_points_f(details.tl_outer.x,
-                                                    details.tl_outer.y,
-                                                    details.tl_inner.x,
-                                                    details.tl_inner.y);
+                        let c0 = rect_from_points(details.tl_outer.x,
+                                                  details.tl_outer.y,
+                                                  details.tl_inner.x,
+                                                  details.tl_inner.y);
                         renderables.push_border(&TransformedRect::new(&c0, transform, device_pixel_ratio),
                                                 layer_index,
                                                 prim_index);
 
-                        let c1 = rect_from_points_f(details.tr_inner.x,
-                                                    details.tr_outer.y,
-                                                    details.tr_outer.x,
-                                                    details.tr_inner.y);
+                        let c1 = rect_from_points(details.tr_inner.x,
+                                                  details.tr_outer.y,
+                                                  details.tr_outer.x,
+                                                  details.tr_inner.y);
                         renderables.push_border(&TransformedRect::new(&c1, transform, device_pixel_ratio),
                                                 layer_index,
                                                 prim_index);
 
-                        let c2 = rect_from_points_f(details.bl_outer.x,
-                                                    details.bl_inner.y,
-                                                    details.bl_inner.x,
-                                                    details.bl_outer.y);
+                        let c2 = rect_from_points(details.bl_outer.x,
+                                                  details.bl_inner.y,
+                                                  details.bl_inner.x,
+                                                  details.bl_outer.y);
                         renderables.push_border(&TransformedRect::new(&c2, transform, device_pixel_ratio),
                                                 layer_index,
                                                 prim_index);
 
-                        let c3 = rect_from_points_f(details.br_inner.x,
-                                                    details.br_inner.y,
-                                                    details.br_outer.x,
-                                                    details.br_outer.y);
+                        let c3 = rect_from_points(details.br_inner.x,
+                                                  details.br_inner.y,
+                                                  details.br_outer.x,
+                                                  details.br_outer.y);
                         renderables.push_border(&TransformedRect::new(&c3, transform, device_pixel_ratio),
                                                 layer_index,
                                                 prim_index);
 
-                        let top_rect = rect_from_points_f(details.tl_inner.x,
-                                                          details.tl_outer.y,
-                                                          details.tr_inner.x,
-                                                          details.tr_outer.y + details.top_width);
+                        let top_rect = rect_from_points(details.tl_inner.x,
+                                                        details.tl_outer.y,
+                                                        details.tr_inner.x,
+                                                        details.tr_outer.y + details.top_width);
 
                         let top_xf_rect = TransformedRect::new(&top_rect,
                                                                transform,
@@ -482,10 +567,10 @@ impl Primitive {
                                               prim_index,
                                               &details.top_color);
 
-                        let left_rect = rect_from_points_f(details.tl_outer.x,
-                                                           details.tl_inner.y,
-                                                           details.tl_outer.x + details.left_width,
-                                                           details.bl_inner.y);
+                        let left_rect = rect_from_points(details.tl_outer.x,
+                                                         details.tl_inner.y,
+                                                         details.tl_outer.x + details.left_width,
+                                                         details.bl_inner.y);
 
                         let left_xf_rect = TransformedRect::new(&left_rect,
                                                                 transform,
@@ -496,10 +581,10 @@ impl Primitive {
                                               prim_index,
                                               &details.left_color);
 
-                        let right_rect = rect_from_points_f(details.tr_outer.x - details.right_width,
-                                                            details.tr_inner.y,
-                                                            details.br_outer.x,
-                                                            details.br_inner.y);
+                        let right_rect = rect_from_points(details.tr_outer.x - details.right_width,
+                                                          details.tr_inner.y,
+                                                          details.br_outer.x,
+                                                          details.br_inner.y);
 
                         let right_xf_rect = TransformedRect::new(&right_rect,
                                                                  transform,
@@ -510,10 +595,10 @@ impl Primitive {
                                               prim_index,
                                               &details.right_color);
 
-                        let bottom_rect = rect_from_points_f(details.bl_inner.x,
-                                                             details.bl_outer.y - details.top_width,
-                                                             details.br_inner.x,
-                                                             details.br_outer.y);
+                        let bottom_rect = rect_from_points(details.bl_inner.x,
+                                                           details.bl_outer.y - details.top_width,
+                                                           details.br_inner.x,
+                                                           details.br_outer.y);
 
                         let bottom_xf_rect = TransformedRect::new(&bottom_rect,
                                                                   transform,
@@ -618,11 +703,15 @@ impl Primitive {
                                                           frame_id);
                 let uv_rect = image_info.uv_rect();
                 let location = PrimitiveCacheEntry {
-                    rect: Rect::new(image_info.pixel_rect.top_left,
-                                    Size2D::new(image_info.pixel_rect.bottom_right.x - image_info.pixel_rect.top_left.x,
-                                                image_info.pixel_rect.bottom_right.y - image_info.pixel_rect.top_left.y)),
+                    rect: Rect::new(
+                              image_info.pixel_rect.top_left,
+                              Size2D::new(image_info.pixel_rect.bottom_right.x -
+                                          image_info.pixel_rect.top_left.x,
+                                          image_info.pixel_rect.bottom_right.y -
+                                          image_info.pixel_rect.top_left.y)),
                     st0: uv_rect.top_left,
                     st1: uv_rect.bottom_right,
+                    prim_cache_index: 0,    // FIXME(pcwalton): Is this right?
                 };
 
                 renderables.push_image(&xf_rect,
@@ -782,7 +871,7 @@ enum CacheSize {
 pub struct Renderable {
     pub bounding_rect: Rect<DevicePixel>,
     layer_index: RenderLayerIndex,
-    is_opaque: bool,
+    pub is_opaque: bool,
     texture_id: TextureId,
     cache_size: CacheSize,
     location: Option<PrimitiveCacheEntry>,
@@ -1081,7 +1170,7 @@ impl TransformedRect {
                 }
             }
             TransformedRectKind::Complex => {
-                println!("complex!");
+                //println!("complex!");
 
                 let vertices = [
                     transform.transform_point4d(&Point4D::new(rect.origin.x,
@@ -1150,8 +1239,7 @@ pub struct BatchKey {
 }
 
 impl BatchKey {
-    fn new(shader: CompositeShader,
-           samplers: [TextureId; MAX_PRIMS_PER_COMPOSITE]) -> BatchKey {
+    fn new(shader: CompositeShader, samplers: [TextureId; MAX_PRIMS_PER_COMPOSITE]) -> BatchKey {
         BatchKey {
             shader: shader,
             samplers: samplers,
@@ -1166,7 +1254,7 @@ pub enum ClipKind {
     //ClipIn,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct CompositePrimitive {
     bounding_rect: Rect<DevicePixel>,
     st0: Point2D<f32>,
@@ -1174,14 +1262,14 @@ pub struct CompositePrimitive {
 }
 
 impl CompositePrimitive {
-    fn new(renderable: &Renderable) -> CompositePrimitive {
-        let location = renderable.location.as_ref().unwrap();
-
-        CompositePrimitive {
-            bounding_rect: renderable.bounding_rect,
-            st0: location.st0,
-            st1: location.st1,
-        }
+    fn new(renderable: &Renderable) -> Option<CompositePrimitive> {
+        renderable.location.as_ref().map(|location| {
+            CompositePrimitive {
+                bounding_rect: renderable.bounding_rect,
+                st0: location.st0,
+                st1: location.st1,
+            }
+        })
     }
 }
 
@@ -1258,13 +1346,15 @@ pub struct PrimitiveCacheEntry {
     rect: Rect<DevicePixel>,
     st0: Point2D<f32>,
     st1: Point2D<f32>,
+    prim_cache_index: u32,
 }
 
 impl PrimitiveCacheEntry {
     fn new(origin: &Point2D<DevicePixel>,
            size: &CacheSize,
-           target_size: &Size2D<f32>) -> PrimitiveCacheEntry {
-
+           target_size: &Size2D<f32>,
+           prim_cache_index: u32)
+           -> PrimitiveCacheEntry {
         let (st0, st1, size) = match size {
             &CacheSize::Fixed => {
                 let x = origin.x.0;
@@ -1298,6 +1388,7 @@ impl PrimitiveCacheEntry {
             rect: Rect::new(*origin, size),
             st0: st0,
             st1: st1,
+            prim_cache_index: prim_cache_index,
         }
     }
 }
@@ -1306,15 +1397,17 @@ pub struct PrimitiveCache {
     target_size: Size2D<f32>,
     page_allocator: TexturePage,
     entries: HashMap<RenderableId, PrimitiveCacheEntry, BuildHasherDefault<FnvHasher>>,
+    index: u32,
 }
 
 impl PrimitiveCache {
-    fn new(size: DevicePixel) -> PrimitiveCache {
+    fn new(size: DevicePixel, index: u32) -> PrimitiveCache {
         let target_size = Size2D::new(size.0 as f32, size.0 as f32);
         PrimitiveCache {
             page_allocator: TexturePage::new(TextureId(0), size.0 as u32),
             entries: HashMap::with_hasher(Default::default()),
             target_size: target_size,
+            index: index,
         }
     }
 
@@ -1327,10 +1420,8 @@ impl PrimitiveCache {
         self.entries.clear();
     }
 
-    fn alloc_prim(&mut self,
-                  id: RenderableId,
-                  size: &CacheSize) -> Option<PrimitiveCacheEntry> {
-        let alloc_size = match size {
+    fn alloc_prim(&mut self, id: RenderableId, size: &CacheSize) -> Option<PrimitiveCacheEntry> {
+        let uv_size = match size {
             &CacheSize::Fixed => {
                  Size2D::new(4, 4)
             }
@@ -1341,15 +1432,15 @@ impl PrimitiveCache {
                 unreachable!()
             }
         };
+        let alloc_size = Size2D::new(uv_size.width, uv_size.height);
         let origin = self.page_allocator
                          .allocate(&alloc_size, TextureFilter::Linear);
 
         origin.map(|origin| {
-            let origin = Point2D::new(DevicePixel(origin.x as i32), DevicePixel(origin.y as i32));
+            let origin = Point2D::new(DevicePixel(origin.x as i32),
+                                      DevicePixel(origin.y as i32));
 
-            let entry = PrimitiveCacheEntry::new(&origin,
-                                                 size,
-                                                 &self.target_size);
+            let entry = PrimitiveCacheEntry::new(&origin, size, &self.target_size, self.index);
 
             self.entries.insert(id, entry.clone());
 
@@ -1357,42 +1448,20 @@ impl PrimitiveCache {
         })
     }
 
-    fn allocate(&mut self,
-                instances: &mut Vec<RenderableId>,
-                renderables: &mut Vec<Renderable>) -> Option<Vec<RenderableId>> {
-        let mut jobs = Vec::new();
+    fn allocate(&mut self, instance: RenderableId, renderable: &mut Renderable) -> bool {
+        if self.get(instance).is_some() {
+            return true
+        }
 
-        for ri in instances {
-            let ri = *ri;
-            let entry = self.get(ri);
-
-            match entry {
-                Some(..) => {}
-                None => {
-                    let RenderableId(i) = ri;
-                    let renderable = &mut renderables[i as usize];
-                    match renderable.cache_size {
-                        CacheSize::None => {
-                            debug_assert!(renderable.location.is_some());
-                        }
-                        CacheSize::Fixed | CacheSize::Variable(..) => {
-                            let location = self.alloc_prim(ri, &renderable.cache_size);
-                            match location {
-                                Some(location) => {
-                                    renderable.location = Some(location);
-                                    jobs.push(ri);
-                                }
-                                None => {
-                                    return None;
-                                }
-                            }
-                        }
-                    }
-                }
+        match renderable.cache_size {
+            CacheSize::None => debug_assert!(renderable.location.is_some()),
+            CacheSize::Fixed | CacheSize::Variable(..) => {
+                debug_assert!(renderable.location.is_none());
+                renderable.location = self.alloc_prim(instance, &renderable.cache_size)
             }
         }
 
-        Some(jobs)
+        renderable.location.is_some()
     }
 }
 
@@ -1616,7 +1685,10 @@ impl Pass {
         let RenderLayerIndex(lid) = renderable.layer_index;
         let layer = &layers[lid];
 
-        let location = renderable.location.as_ref().unwrap();
+        let location = match renderable.location {
+            Some(ref location) => location,
+            None => return,
+        };
 
         match renderable.details {
             RenderableDetails::Rectangle(ref details) => {
@@ -1826,7 +1898,7 @@ impl Pass {
                             }
                         }
                         _ => {
-                            panic!("todo: other prims in direct layer cache!");
+                            println!("todo: other prims in direct layer cache!");
                         }
                     }
                 }
@@ -1856,9 +1928,7 @@ pub struct FrameBuilder {
 }
 
 impl FrameBuilder {
-    pub fn new(viewport_size: Size2D<f32>,
-               device_pixel_ratio: f32,
-               debug: bool) -> FrameBuilder {
+    pub fn new(viewport_size: Size2D<f32>, device_pixel_ratio: f32, debug: bool) -> FrameBuilder {
         let viewport_size = Size2D::new(viewport_size.width as i32, viewport_size.height as i32);
         FrameBuilder {
             screen_rect: Rect::new(Point2D::zero(), viewport_size),
@@ -2108,7 +2178,9 @@ impl FrameBuilder {
                  resource_cache: &mut ResourceCache,
                  frame_id: FrameId,
                  pipeline_auxiliary_lists: &HashMap<PipelineId, AuxiliaryLists, BuildHasherDefault<FnvHasher>>,
-                 layer_map: &HashMap<ScrollLayerId, Layer, BuildHasherDefault<FnvHasher>>) -> Frame {
+                 layer_map: &HashMap<ScrollLayerId, Layer, BuildHasherDefault<FnvHasher>>,
+                 tiling_strategy: &mut SpecifiedTilingStrategy)
+                 -> Frame {
         //let _pf = util::ProfileScope::new("--build--");
 
         // Remove layers that are transparent.
@@ -2182,25 +2254,23 @@ impl FrameBuilder {
         resource_cache.add_resource_list(&resource_list, frame_id);
         resource_cache.raster_pending_glyphs(frame_id);
 
-        let tiling_strategy = BspTilingStrategy::new(&screen_rect, self.device_pixel_ratio);
-        self.create_frame_with_tiling_strategy(resource_cache,
-                                               frame_id,
-                                               pipeline_auxiliary_lists,
-                                               layer_ubo,
-                                               tiling_strategy)
+        tiling_strategy.reset(&screen_rect, self.device_pixel_ratio);
+        self.create_frame(resource_cache,
+                          tiling_strategy,
+                          frame_id,
+                          pipeline_auxiliary_lists,
+                          layer_ubo)
     }
 
-    fn create_frame_with_tiling_strategy<S>(&mut self,
-                                            resource_cache: &mut ResourceCache,
-                                            frame_id: FrameId,
-                                            pipeline_auxiliary_lists:
-                                                &HashMap<PipelineId,
-                                                         AuxiliaryLists,
-                                                         BuildHasherDefault<FnvHasher>>,
-                                            layer_ubo: Ubo<PackedLayer>,
-                                            mut tile_strategy: S)
-                                            -> Frame
-                                            where S: TilingStrategy {
+    fn create_frame(&mut self,
+                    resource_cache: &mut ResourceCache,
+                    tiling_strategy: &mut SpecifiedTilingStrategy,
+                    frame_id: FrameId,
+                    pipeline_auxiliary_lists: &HashMap<PipelineId,
+                                                       AuxiliaryLists,
+                                                       BuildHasherDefault<FnvHasher>>,
+                    layer_ubo: Ubo<PackedLayer>)
+                    -> Frame {
         // Compile visible primitives to renderables
         let mut rlist = RenderableList::new();
         for (layer_index, layer) in self.layers.iter().enumerate() {
@@ -2235,29 +2305,20 @@ impl FrameBuilder {
         }
 
         // Build screen space tiles.
-        tile_strategy.add_renderables(&rlist);
+        tiling_strategy.add_renderables(&rlist);
 
+        let mut prim_caches = vec![PrimitiveCache::new(PRIMITIVE_CACHE_SIZE, 0)];
         let mut region_debug_rects = vec![];
         let mut region_error_tiles = vec![];
         let mut region_clear_tiles = vec![];
         let mut region_batches = vec![];
-        let region_count = tile_strategy.region_count();
+        let region_count = tiling_strategy.region_count();
         for region_index in 0..region_count {
             let mut debug_rects = vec![];
             let mut error_tiles = vec![];
             let mut clear_tiles = vec![];
-
-            let mut samplers = [
-                TextureId(0),
-                TextureId(0),
-                TextureId(0),
-                TextureId(0),
-                TextureId(0),
-                TextureId(0),
-                TextureId(0),
-                TextureId(0),
-            ];
-            let mut batches = HashMap::with_hasher(Default::default());
+            let mut prim_cache_batches: Vec<_> =
+                prim_caches.iter().map(|_| HashMap::with_hasher(Default::default())).collect();
 
 /*
             if self.debug {
@@ -2271,7 +2332,9 @@ impl FrameBuilder {
             }
 */
 
-            tile_strategy.build_and_process_tiles(region_index, |rect, built_tile, instances| {
+            let debug = self.debug;
+            let layers = &self.layers[..];
+            tiling_strategy.build_and_process_tiles(region_index, |rect, built_tile, instances| {
                 let cover_indices = match built_tile {
                     BuiltTile::Tile(cover_indices) => cover_indices,
                     BuiltTile::Error => return,
@@ -2296,7 +2359,7 @@ impl FrameBuilder {
                     b.cmp(&a)
                 });*/
 
-                if self.debug {
+                if debug {
                     let color = ColorF::new(1.0, 0.0, 0.0, 1.0);
                     let debug_rect = DebugRect {
                         label: format!("{}", cover_indices.len()),
@@ -2322,7 +2385,7 @@ impl FrameBuilder {
                         let renderable = &rlist.renderables[ri as usize];
 
                         let RenderLayerIndex(lid) = renderable.layer_index;
-                        let layer = &self.layers[lid];
+                        let layer = &layers[lid];
 
                         if current_layer_index == renderable.layer_index {
                             need_prim = !layer_is_opaque;
@@ -2343,106 +2406,136 @@ impl FrameBuilder {
                 });
 
                 if cover_indices.len() > MAX_PRIMS_PER_COMPOSITE {
-                    error_tiles.push(ErrorTile {
+                    /*error_tiles.push(ErrorTile {
                         rect: rect,
                     });
-                    return;
+                    return;*/
+                    cover_indices.truncate(MAX_PRIMS_PER_COMPOSITE);
                 }
 
-                let mut composite_tile = CompositeTile::new(&rect);
-                let mut next_prim_index = 0;
+                let mut prim_cache_assignment = vec![];
+                'outer: for &renderable_instance_id in cover_indices.iter().rev() {
+                    let renderable_id = instances[renderable_instance_id.0 as usize];
+                    let renderable = &mut rlist.renderables[renderable_id.0 as usize];
+                    if let Some(ref location) = renderable.location {
+                        prim_cache_assignment.push(location.prim_cache_index as usize);
+                        continue
+                    }
 
-                for instance_index in cover_indices.iter().rev() {
-                    let RenderableInstanceId(ii) = *instance_index;
+                    // We iterate over primitive caches in reverse order so that we avoid trying to
+                    // constantly insert in primitive caches that are obviously full.
+                    for (i, prim_cache) in prim_caches.iter_mut().rev().enumerate() {
+                        if prim_cache.allocate(renderable_id, renderable) {
+                            prim_cache_assignment.push(i);
+                            continue 'outer
+                        }
+                    }
 
-                    let RenderableId(ri) = instances[ii as usize];
-                    let renderable = &rlist.renderables[ri as usize];
-
-                    samplers[next_prim_index] = renderable.texture_id;
-
-                    let RenderLayerIndex(layer_index) = renderable.layer_index;
-
-                    composite_tile.set_primitive(next_prim_index,
-                                                 *instance_index,
-                                                 layer_index as u32);
-
-                    next_prim_index += 1;
+                    let prim_cache_index = prim_caches.len();
+                    let mut new_prim_cache = PrimitiveCache::new(PRIMITIVE_CACHE_SIZE,
+                                                                 prim_cache_index as u32);
+                    if !new_prim_cache.allocate(renderable_id, renderable) {
+                        panic!("Renderable too large to fit in primitive cache!")
+                    }
+                    prim_cache_assignment.push(prim_cache_index);
+                    prim_caches.push(new_prim_cache);
+                    prim_cache_batches.push(HashMap::with_hasher(Default::default()))
                 }
 
-                let shader = match next_prim_index {
-                    1 => CompositeShader::Prim1,
-                    2 => CompositeShader::Prim2,
-                    3 => CompositeShader::Prim3,
-                    4 => CompositeShader::Prim4,
-                    5 => CompositeShader::Prim5,
-                    6 => CompositeShader::Prim6,
-                    7 => CompositeShader::Prim7,
-                    8 => CompositeShader::Prim8,
-                    _ => unreachable!(),
-                };
+                let mut composite_tiles = HashMap::new();
+                for (cover_index, prim_cache_index) in prim_cache_assignment.into_iter()
+                                                                            .enumerate() {
+                    let renderable_instance_id =
+                        //cover_indices[cover_indices.len() - cover_index - 1];
+                        cover_indices[cover_indices.len() - cover_index - 1];
+                    let renderable_id = instances[renderable_instance_id.0 as usize];
+                    let renderable = &mut rlist.renderables[renderable_id.0 as usize];
 
-                let batch_key = BatchKey::new(shader, samplers);
-                let batch = batches.entry(batch_key).or_insert_with(|| {
-                    Vec::new()
-                });
-                batch.push(composite_tile);
+                    let &mut (ref mut composite_tile, ref mut samplers, ref mut next_prim_index) =
+                        composite_tiles.entry(prim_cache_index).or_insert_with(|| {
+                            (CompositeTile::new(&rect), ZERO_SAMPLERS, 0)
+                        });
+                    samplers[*next_prim_index] = renderable.texture_id;
+                    composite_tile.set_primitive(*next_prim_index,
+                                                 renderable_id,
+                                                 renderable.layer_index.0 as u32);
+                    *next_prim_index += 1;
+                }
+
+                for (prim_cache_index, (composite_tile, samplers, prim_count)) in composite_tiles {
+                    let shader = match prim_count {
+                        1 => CompositeShader::Prim1,
+                        2 => CompositeShader::Prim2,
+                        3 => CompositeShader::Prim3,
+                        4 => CompositeShader::Prim4,
+                        5 => CompositeShader::Prim5,
+                        6 => CompositeShader::Prim6,
+                        7 => CompositeShader::Prim7,
+                        8 => CompositeShader::Prim8,
+                        _ => unreachable!(),
+                    };
+
+                    let batch_key = BatchKey::new(shader, samplers);
+                    prim_cache_batches[prim_cache_index].entry(batch_key)
+                                                        .or_insert_with(|| vec![])
+                                                        .push(composite_tile)
+                }
             });
             region_clear_tiles.push(clear_tiles);
             region_error_tiles.push(error_tiles);
             region_debug_rects.push(debug_rects);
-            region_batches.push(batches);
+            region_batches.push(prim_cache_batches);
         }
 
         // Step through each tile and allocate renderable instance jobs as required!
         // This is sequential due to the shared primitive cache, but should be quick
         // since the main splitting and job ubo creation can be passed to worker threads!
-        let mut passes = vec![Pass::new()];
-        let mut prim_cache = PrimitiveCache::new(DevicePixel(2048));
-        for region_index in 0..region_count {
-            let instances = tile_strategy.instances(region_index);
-            if instances.is_empty() {
-                continue
-            }
-
-            let render_jobs = prim_cache.allocate(instances, &mut rlist.renderables);
-
-            let render_jobs = match render_jobs {
-                Some(render_jobs) => render_jobs,
-                None => {
-                    prim_cache.clear();
-                    passes.push(Pass::new());
-                    prim_cache.allocate(instances, &mut rlist.renderables)
-                              .expect("TODO Handle edge case failure to fit a single tile in cache!")
+        let mut passes = vec![];
+        //println!("creating passes:");
+        for prim_cache_index in 0..prim_caches.len() {
+            passes.push(Pass::new());
+            for region_index in 0..region_count {
+                let instances = tiling_strategy.instances(region_index);
+                if instances.is_empty() {
+                    continue
                 }
-            };
 
-            let pass = passes.last_mut().unwrap();
+                let pass = passes.last_mut().unwrap();
 
-            // create prim ubo from instance list
-            let mut prim_ubo = Vec::new();
+                // create prim ubo from instance list
+                let mut prim_ubo = vec![];
+                let mut max_renderable_id = 0;
+                let composite_tiles_for_batches = &region_batches[region_index][prim_cache_index];
+                for (_, composite_tiles) in composite_tiles_for_batches {
+                    for composite_tile in composite_tiles {
+                        for &RenderableId(renderable_id) in &composite_tile.prim_indices[..] {
+                            max_renderable_id = cmp::max(renderable_id, max_renderable_id)
+                        }
+                    }
+                }
 
-            for id in render_jobs {
-                pass.render_to_cache(id,
-                                     &rlist.renderables,
-                                     &self.layers,
-                                     &self.clips,
-                                     self.device_pixel_ratio);
+                for renderable_id in 0..max_renderable_id {
+                    let renderable_id = RenderableId(renderable_id);
+                    pass.render_to_cache(renderable_id,
+                                         &rlist.renderables,
+                                         &self.layers,
+                                         &self.clips,
+                                         self.device_pixel_ratio);
+                    let renderable = &rlist.renderables[renderable_id.0 as usize];
+                    prim_ubo.push(CompositePrimitive::new(renderable).unwrap_or(
+                            DUMMY_COMPOSITE_PRIMITIVE))
+                }
+
+                // TODO(gw): Batch between tiles within the same
+                //           prim cache pass!!
+
+                let mut tile_batch = TileBatch::new();
+                tile_batch.primitives = prim_ubo;
+                // TODO(gw): perf warning: remove clone
+                tile_batch.batches = composite_tiles_for_batches.clone();
+
+                pass.tile_batches.push(tile_batch);
             }
-
-            for instance in instances {
-                let RenderableId(i) = *instance;
-                prim_ubo.push(CompositePrimitive::new(&rlist.renderables[i as usize]));
-            }
-
-            // TODO(gw): Batch between tiles within the same
-            //           prim cache pass!!
-
-            let mut tile_batch = TileBatch::new();
-            tile_batch.primitives = prim_ubo;
-            // TODO(gw): perf warning: remove clone
-            tile_batch.batches = region_batches[region_index].clone();
-
-            pass.tile_batches.push(tile_batch);
         }
 
         let mut debug_rects = vec![];
@@ -2468,7 +2561,8 @@ impl FrameBuilder {
             error_tiles: error_tiles,
             clear_tiles: clear_tiles,
             passes: passes,
-            prim_cache_size: prim_cache.target_size,
+            prim_cache_size: Size2D::new(PRIMITIVE_CACHE_SIZE.0 as f32,
+                                         PRIMITIVE_CACHE_SIZE.0 as f32),
         }
     }
 }

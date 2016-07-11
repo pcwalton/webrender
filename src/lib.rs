@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #![feature(step_by)]
+#![feature(link_args)]
 //#![feature(mpsc_select)]
 
 #[macro_use]
@@ -29,6 +30,7 @@ mod render_backend;
 mod resource_cache;
 mod resource_list;
 mod scene;
+mod simd_tiling_strategy;
 mod spring;
 mod texture_cache;
 mod tiling;

@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use app_units::Au;
+use bsp_tiling_strategy::BspTilingStrategy;
 use euclid::{Matrix4D, Point2D, Point3D, Point4D, Rect, Size2D};
 use fnv::FnvHasher;
 use geometry::ray_intersects_rect;
@@ -17,9 +18,10 @@ use layer::{Layer, ScrollingState};
 use resource_cache::ResourceCache;
 use scene::{SceneStackingContext, ScenePipeline, Scene, SceneItem, SpecificSceneItem};
 use scoped_threadpool;
+use simd_tiling_strategy::SimdTilingStrategy;
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasherDefault;
-use tiling::{Clip, ClipKind, FrameBuilder};
+use tiling::{Clip, ClipKind, FrameBuilder, SpecifiedTilingStrategy};
 use util::{MatrixHelpers};
 use webrender_traits::{AuxiliaryLists, PipelineId, Epoch, ScrollPolicy, ScrollLayerId};
 use webrender_traits::{StackingContext, FilterOp, MixBlendMode};
@@ -73,6 +75,7 @@ pub struct Frame {
     pub root_scroll_layer_id: Option<ScrollLayerId>,
     id: FrameId,
     debug: bool,
+    tiling_strategy: SpecifiedTilingStrategy,
     frame_builder: Option<FrameBuilder>,
 }
 
@@ -201,7 +204,12 @@ impl StackingContextHelpers for StackingContext {
 }
 
 impl Frame {
-    pub fn new(debug: bool) -> Frame {
+    pub fn new(debug: bool, simd: bool) -> Frame {
+        let tiling_strategy = if !simd {
+            SpecifiedTilingStrategy::Bsp(BspTilingStrategy::new())
+        } else {
+            SpecifiedTilingStrategy::Simd(SimdTilingStrategy::new())
+        };
         Frame {
             pipeline_epoch_map: HashMap::with_hasher(Default::default()),
             pipeline_auxiliary_lists: HashMap::with_hasher(Default::default()),
@@ -209,6 +217,7 @@ impl Frame {
             root_scroll_layer_id: None,
             id: FrameId(0),
             debug: debug,
+            tiling_strategy: tiling_strategy,
             frame_builder: None,
         }
     }
@@ -871,7 +880,8 @@ impl Frame {
             builder.build(resource_cache,
                           self.id,
                           &self.pipeline_auxiliary_lists,
-                          &self.layers)
+                          &self.layers,
+                          &mut self.tiling_strategy)
         });
 
         let layers_bouncing_back = self.collect_layers_bouncing_back();

@@ -4,7 +4,8 @@
 
 use euclid::{Matrix4D, Point2D, Point4D, Rect, Size2D};
 use internal_types::{DevicePixel};
-use num_traits::Zero;
+use num_traits::{One, Zero};
+use std::ops::{Add, Div, Sub};
 use time::precise_time_ns;
 
 #[allow(dead_code)]
@@ -139,21 +140,9 @@ pub fn rect_contains_rect(rect: &Rect<DevicePixel>, other: &Rect<DevicePixel>) -
 }
 
 #[inline]
-pub fn rect_from_points(x0: DevicePixel,
-                        y0: DevicePixel,
-                        x1: DevicePixel,
-                        y1: DevicePixel) -> Rect<DevicePixel> {
-    Rect::new(Point2D::new(x0, y0),
-              Size2D::new(x1 - x0, y1 - y0))
-}
-
-#[inline]
-pub fn rect_from_points_f(x0: f32,
-                          y0: f32,
-                          x1: f32,
-                          y1: f32) -> Rect<f32> {
-    Rect::new(Point2D::new(x0, y0),
-              Size2D::new(x1 - x0, y1 - y0))
+pub fn rect_from_points<N>(x0: N, y0: N, x1: N, y1: N) -> Rect<N>
+                           where N: Clone + Sub<N,Output=N> {
+    Rect::new(Point2D::new(x0.clone(), y0.clone()), Size2D::new(x1 - x0, y1 - y0))
 }
 
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -196,3 +185,22 @@ pub fn subtract_rect(rect: &Rect<DevicePixel>,
         results.push(*rect);
     }
 }
+
+pub fn clamp(a: i32, min: i32, max: i32) -> i32 {
+    if a < min {
+        min
+    } else if a > max {
+        max
+    } else {
+        a
+    }
+}
+
+pub fn div_roundup<T>(a: T, b: T) -> T where T: Add<T, Output=T> +
+                                                Div<T, Output=T> +
+                                                Sub<T, Output=T> +
+                                                Copy +
+                                                One {
+    (a + b - T::one()) / b
+}
+

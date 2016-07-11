@@ -56,7 +56,9 @@ impl RenderBackend {
                notifier: Arc<Mutex<Option<Box<RenderNotifier>>>>,
                webrender_context_handle: Option<NativeGLContextHandle>,
                _config: FrameBuilderConfig,
-               debug: bool) -> RenderBackend {
+               debug: bool,
+               simd: bool)
+               -> RenderBackend {
         let mut thread_pool = scoped_threadpool::Pool::new(8);
 
         let resource_cache = ResourceCache::new(&mut thread_pool,
@@ -74,7 +76,7 @@ impl RenderBackend {
             device_pixel_ratio: device_pixel_ratio,
             resource_cache: resource_cache,
             scene: Scene::new(),
-            frame: Frame::new(debug),
+            frame: Frame::new(debug, simd),
             next_namespace_id: IdNamespace(1),
             notifier: notifier,
             webrender_context_handle: webrender_context_handle,

@@ -74,17 +74,13 @@ pub struct BspTilingStrategy {
 }
 
 impl BspTilingStrategy {
-    pub fn new(screen_rect: &Rect<DevicePixel>, device_pixel_ratio: f32) -> BspTilingStrategy {
+    pub fn new() -> BspTilingStrategy {
         let x_tile_size = DevicePixel(512);
         let y_tile_size = DevicePixel(512);
-        let x_tile_count = (screen_rect.size.width + x_tile_size - DevicePixel(1)).0 /
-            x_tile_size.0;
-        let y_tile_count = (screen_rect.size.height + y_tile_size - DevicePixel(1)).0 /
-            y_tile_size.0;
 
         let tile_info = TilingInfo {
-           x_tile_count: x_tile_count,
-           y_tile_count: y_tile_count,
+           x_tile_count: 0,
+           y_tile_count: 0,
            x_tile_size: x_tile_size,
            y_tile_size: y_tile_size,
         };
@@ -92,12 +88,28 @@ impl BspTilingStrategy {
         BspTilingStrategy {
             tiling_info: tile_info,
             tiles: vec![],
-            device_pixel_ratio: device_pixel_ratio,
+            device_pixel_ratio: 0.0,
         }
+    }
+
+    #[inline(always)]
+    fn get_tile_range(&self, rect: &Rect<DevicePixel>) -> TileRange {
+        self.tiling_info.get_tile_range(rect)
     }
 }
 
 impl TilingStrategy for BspTilingStrategy {
+    fn reset(&mut self, screen_rect: &Rect<DevicePixel>, device_pixel_ratio: f32) {
+        let x_tile_count = (screen_rect.size.width + self.tiling_info.x_tile_size -
+                            DevicePixel(1)).0 / self.tiling_info.x_tile_size.0;
+        let y_tile_count = (screen_rect.size.height + self.tiling_info.y_tile_size -
+                            DevicePixel(1)).0 / self.tiling_info.y_tile_size.0;
+        self.tiling_info.x_tile_count = x_tile_count;
+        self.tiling_info.y_tile_count = y_tile_count;
+        self.tiles.clear();
+        self.device_pixel_ratio = device_pixel_ratio;
+    }
+
     fn add_renderables(&mut self, rlist: &RenderableList) {
         // Build screen space tiles, which are individual BSP trees.
         for y in 0..self.tiling_info.y_tile_count {
@@ -128,11 +140,6 @@ impl TilingStrategy for BspTilingStrategy {
 
     fn region_count(&mut self) -> usize {
         self.tiles.len()
-    }
-
-    #[inline(always)]
-    fn get_tile_range(&self, rect: &Rect<DevicePixel>) -> TileRange {
-        self.tiling_info.get_tile_range(rect)
     }
 
     fn build_and_process_tiles<F>(&mut self, region_index: usize, mut iteration_function: F)
