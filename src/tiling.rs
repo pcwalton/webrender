@@ -2417,6 +2417,7 @@ impl FrameBuilder {
                 'outer: for &renderable_instance_id in cover_indices.iter().rev() {
                     let renderable_id = instances[renderable_instance_id.0 as usize];
                     let renderable = &mut rlist.renderables[renderable_id.0 as usize];
+                    //println!("assigning renderable ID {:?}", renderable_id);
                     if let Some(ref location) = renderable.location {
                         prim_cache_assignment.push(location.prim_cache_index as usize);
                         continue
@@ -2446,7 +2447,6 @@ impl FrameBuilder {
                 for (cover_index, prim_cache_index) in prim_cache_assignment.into_iter()
                                                                             .enumerate() {
                     let renderable_instance_id =
-                        //cover_indices[cover_indices.len() - cover_index - 1];
                         cover_indices[cover_indices.len() - cover_index - 1];
                     let renderable_id = instances[renderable_instance_id.0 as usize];
                     let renderable = &mut rlist.renderables[renderable_id.0 as usize];
@@ -2491,39 +2491,71 @@ impl FrameBuilder {
         // This is sequential due to the shared primitive cache, but should be quick
         // since the main splitting and job ubo creation can be passed to worker threads!
         let mut passes = vec![];
-        //println!("creating passes:");
+        println!("creating passes, {:?} prim cache(s)", prim_caches.len());
         for prim_cache_index in 0..prim_caches.len() {
             passes.push(Pass::new());
             for region_index in 0..region_count {
-                let instances = tiling_strategy.instances(region_index);
+                /*let instances = tiling_strategy.instances(region_index);
                 if instances.is_empty() {
                     continue
-                }
+                }*/
 
                 let pass = passes.last_mut().unwrap();
 
                 // create prim ubo from instance list
-                let mut prim_ubo = vec![];
                 let mut max_renderable_id = 0;
                 let composite_tiles_for_batches = &region_batches[region_index][prim_cache_index];
+                let mut used_renderable_ids = HashSet::new();
                 for (_, composite_tiles) in composite_tiles_for_batches {
                     for composite_tile in composite_tiles {
                         for &RenderableId(renderable_id) in &composite_tile.prim_indices[..] {
-                            max_renderable_id = cmp::max(renderable_id, max_renderable_id)
+                            //println!("... using renderable ID {:?}", renderable_id);
+                            max_renderable_id = cmp::max(renderable_id, max_renderable_id);
+                            used_renderable_ids.insert(renderable_id);
                         }
                     }
                 }
 
-                for renderable_id in 0..max_renderable_id {
+                let mut prim_ubo =
+                    vec![DUMMY_COMPOSITE_PRIMITIVE; (max_renderable_id + 1) as usize];
+                //for renderable_id in 0..max_renderable_id {
+                for &renderable_id in &used_renderable_ids {
+                    /*if (!used_renderable_ids.contains(&renderable_id)) {
+                        println!("*** ID wasn't in set: {:?}", renderable_id);
+                    }*/
+                    //println!("*** rendering ID: {:?}", renderable_id);
+
                     let renderable_id = RenderableId(renderable_id);
+                    let renderable = &rlist.renderables[renderable_id.0 as usize];
+                    match renderable.location {
+                        Some(ref location) if location.prim_cache_index ==
+                            (prim_cache_index as u32) => {
+                            //println!("... location rect={:?}", location.rect);
+                        }
+                        /*
+                        Some(ref location) => {
+                            println!("mismatched location prim cache index: location={:?} \
+                                      this={:?}",
+                                     location.prim_cache_index,
+                                     prim_cache_index);
+                            continue
+                        }
+                        None => {
+                            println!("no prim cache index: this={:?} {:?}",
+                                     prim_cache_index,
+                                     renderable);
+                            continue
+                        }*/
+                        _ => continue,
+                    };
                     pass.render_to_cache(renderable_id,
                                          &rlist.renderables,
                                          &self.layers,
                                          &self.clips,
                                          self.device_pixel_ratio);
-                    let renderable = &rlist.renderables[renderable_id.0 as usize];
-                    prim_ubo.push(CompositePrimitive::new(renderable).unwrap_or(
-                            DUMMY_COMPOSITE_PRIMITIVE))
+                    if let Some(composite_primitive) = CompositePrimitive::new(renderable) {
+                        prim_ubo[renderable_id.0 as usize] = composite_primitive
+                    }
                 }
 
                 // TODO(gw): Batch between tiles within the same

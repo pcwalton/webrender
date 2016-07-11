@@ -1262,9 +1262,7 @@ impl Renderer {
         }
     }
 
-    fn draw_tile_frame(&mut self,
-                       frame: &Frame,
-                       framebuffer_size: &Size2D<u32>) {
+    fn draw_tile_frame(&mut self, frame: &Frame, framebuffer_size: &Size2D<u32>) {
         //println!("render {} debug rects", frame.debug_rects.len());
 
         for debug_rect in frame.debug_rects.iter().rev() {
