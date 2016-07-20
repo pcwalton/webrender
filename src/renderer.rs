@@ -96,7 +96,7 @@ fn get_ubo_max_len<T>(max_ubo_size: usize) -> usize {
     //           seem to go very slow when you have high
     //           constants for array lengths. Investigate
     //           whether this clamping actually hurts performance!
-    cmp::min(max_items, 512)
+    cmp::min(max_items, 256)
 }
 
 fn create_composite_shader(name: &'static str,
@@ -1424,7 +1424,6 @@ impl Renderer {
     fn draw_tile_frame(&mut self,
                        frame: &Frame,
                        framebuffer_size: &Size2D<u32>) {
-        //println!("render {} debug rects", frame.debug_rects.len());
         self.gpu_profile_paint.begin();
         self.gpu_profile_paint.end();
         self.gpu_profile_composite.begin();
