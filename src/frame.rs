@@ -8,7 +8,7 @@ use fnv::FnvHasher;
 use geometry::ray_intersects_rect;
 use internal_types::{ANGLE_FLOAT_TO_FIXED, AxisDirection};
 use internal_types::{CompositionOp};
-use internal_types::{LowLevelFilterOp, MAX_RECT};
+use internal_types::{LogicalPixel, LowLevelFilterOp, MAX_RECT};
 use internal_types::{RendererFrame};
 use layer::{Layer, ScrollingState};
 use resource_cache::ResourceCache;
@@ -16,9 +16,10 @@ use scene::{SceneStackingContext, ScenePipeline, Scene, SceneItem, SpecificScene
 use scoped_threadpool;
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasherDefault;
+use std::iter;
 use tiling::{Clip, FrameBuilder, FrameBuilderConfig};
 use util::{MatrixHelpers};
-use webrender_traits::{AuxiliaryLists, PipelineId, Epoch, ScrollPolicy, ScrollLayerId};
+use webrender_traits::{AuxiliaryLists, ColorF, PipelineId, Epoch, ScrollPolicy, ScrollLayerId};
 use webrender_traits::{StackingContext, FilterOp, MixBlendMode};
 use webrender_traits::{ScrollEventPhase, ScrollLayerInfo, SpecificDisplayItem, ScrollLayerState};
 
@@ -36,6 +37,9 @@ struct FlattenContext<'a> {
     scene: &'a Scene,
     pipeline_sizes: &'a mut HashMap<PipelineId, Size2D<f32>>,
     builder: &'a mut FrameBuilder,
+    old_layer_scrolling_states: &'a HashMap<ScrollLayerId,
+                                            ScrollingState,
+                                            BuildHasherDefault<FnvHasher>>,
 }
 
 #[derive(Debug)]
@@ -63,6 +67,10 @@ struct FlattenInfo {
 
     /// The final concatenated transform, taking perspective into account.
     world_transform: Matrix4D<f32>,
+
+    /// The layer transform for children in world space. This is used by
+    /// `update_layer_transform()` in order to take scrolling into account properly.
+    layer_transform_for_children: Matrix4D<f32>,
 
     pipeline_id: PipelineId,
 }
@@ -401,20 +409,6 @@ impl Frame {
                                                                 .expect("root layer must be a scroll layer!");
                 self.root_scroll_layer_id = Some(root_scroll_layer_id);
 
-                // Insert global position: fixed elements layer
-                debug_assert!(self.layers.is_empty());
-                let root_fixed_layer_id = ScrollLayerId::create_fixed(root_pipeline_id);
-                self.layers.insert(
-                    root_fixed_layer_id,
-                    Layer::new(root_stacking_context.stacking_context.overflow.origin,
-                               root_stacking_context.stacking_context.overflow.size,
-                               &Rect::new(Point2D::zero(), root_pipeline.viewport_size),
-                               &Matrix4D::identity(),
-                               &Matrix4D::identity(),
-                               &Matrix4D::identity(),
-                               root_pipeline_id,
-                               root_stacking_context.stacking_context.servo_id));
-
                 // Work around borrow check on resource cache
                 {
                     let mut frame_builder = FrameBuilder::new(root_pipeline.viewport_size,
@@ -428,7 +422,24 @@ impl Frame {
                             scene: scene,
                             pipeline_sizes: pipeline_sizes,
                             builder: &mut frame_builder,
+                            old_layer_scrolling_states: &old_layer_scrolling_states,
                         };
+
+                        // Insert global position: fixed elements layer
+                        debug_assert!(self.layers.is_empty());
+                        let root_fixed_layer_id = ScrollLayerId::create_fixed(root_pipeline_id);
+                        let mut root_layer =
+                            Layer::new(root_stacking_context.stacking_context.overflow.origin,
+                                       root_stacking_context.stacking_context.overflow.size,
+                                       &Rect::new(Point2D::zero(), root_pipeline.viewport_size),
+                                       &Matrix4D::identity(),
+                                       &Matrix4D::identity(),
+                                       &Matrix4D::identity(),
+                                       root_pipeline_id,
+                                       root_stacking_context.stacking_context.servo_id,
+                                       old_layer_scrolling_states.get(&root_fixed_layer_id));
+                        self.update_layer_transform(&mut root_layer, &Matrix4D::identity());
+                        self.layers.insert(root_fixed_layer_id, root_layer);
 
                         let parent_info = FlattenInfo {
                             viewport_rect: Rect::new(Point2D::zero(), root_pipeline.viewport_size),
@@ -442,26 +453,20 @@ impl Frame {
                             local_transform: Matrix4D::identity(),
                             local_perspective: Matrix4D::identity(),
                             world_transform: Matrix4D::identity(),
+                            layer_transform_for_children: Matrix4D::identity(),
                             pipeline_id: root_pipeline_id,
                         };
 
                         let root_pipeline = SceneItemKind::Pipeline(root_pipeline);
                         self.flatten(root_pipeline,
                                      &parent_info,
-                                     &mut context);
+                                     &mut context,
+                                     0);
+
+                        println!("layer count={:?}", self.layers.len());
                     }
 
                     self.frame_builder = Some(frame_builder);
-                }
-
-                // TODO(gw): These are all independent - can be run through thread pool if it shows up in the profile!
-                for (scroll_layer_id, layer) in &mut self.layers {
-                    let scrolling_state = match old_layer_scrolling_states.get(&scroll_layer_id) {
-                        Some(old_scrolling_state) => *old_scrolling_state,
-                        None => ScrollingState::new(),
-                    };
-
-                    layer.finalize(&scrolling_state);
                 }
             }
         }
@@ -472,7 +477,8 @@ impl Frame {
                            info: &FlattenInfo,
                            context: &mut FlattenContext,
                            sc_rect: Rect<f32>,
-                           composition_ops: Vec<CompositionOp>) {
+                           composition_ops: Vec<CompositionOp>,
+                           level: u32) {
         context.builder.push_layer(sc_rect,
                                    info.current_clip_rect,
                                    info.world_transform,
@@ -480,6 +486,15 @@ impl Frame {
                                    info.actual_scroll_layer_id,
                                    info.offset_from_current_layer,
                                    composition_ops);
+
+        // Add a white background to the root.
+        if level == 0 {
+            let root_rect = Rect::new(Point2D::zero(), sc_rect.size);
+            context.builder.add_solid_rectangle(&root_rect,
+                                                &root_rect,
+                                                None,
+                                                &ColorF::new(1.0, 1.0, 1.0, 1.0))
+        }
 
         for item in scene_items {
             match item.specific {
@@ -494,6 +509,8 @@ impl Frame {
                     };
 
                     for item in &draw_list.items {
+                        // TODO(pcwalton): Cull offscreen items.
+
                         let clips = auxiliary_lists.complex_clip_regions(&item.clip.complex);
                         let clip = if clips.is_empty() {
                             None
@@ -569,7 +586,8 @@ impl Frame {
                     let child = SceneItemKind::StackingContext(stacking_context, pipeline_id);
                     self.flatten(child,
                                  info,
-                                 context);
+                                 context,
+                                 level + 1);
                 }
                 SpecificSceneItem::Iframe(ref iframe_info) => {
                     let pipeline = context.scene
@@ -612,6 +630,7 @@ impl Frame {
                             local_transform: info.local_transform,
                             local_perspective: info.local_perspective,
                             world_transform: info.world_transform,
+                            layer_transform_for_children: info.layer_transform_for_children,
                             pipeline_id: pipeline.pipeline_id,
                         };
 
@@ -632,11 +651,14 @@ impl Frame {
                                                &iframe_info.local_transform,
                                                &iframe_info.local_perspective,
                                                pipeline.pipeline_id,
-                                               iframe_stacking_context.stacking_context.servo_id));
+                                               iframe_stacking_context.stacking_context.servo_id,
+                                               context.old_layer_scrolling_states
+                                                      .get(&iframe_fixed_layer_id)));
 
                         self.flatten(iframe,
                                      &iframe_info,
-                                     context);
+                                     context,
+                                     level + 1);
                     }
                 }
             }
@@ -648,7 +670,8 @@ impl Frame {
     fn flatten(&mut self,
                scene_item: SceneItemKind,
                parent_info: &FlattenInfo,
-               context: &mut FlattenContext) {
+               context: &mut FlattenContext,
+               level: u32) {
         //let _pf = util::ProfileScope::new("  flatten");
 
         let (stacking_context, pipeline_id) = match scene_item {
@@ -747,8 +770,10 @@ impl Frame {
                 let mut info = FlattenInfo {
                     viewport_rect: viewport_rect,
                     viewport_transform: world_transform,
-                    offset_from_origin: parent_info.offset_from_origin + stacking_context.bounds.origin,
-                    offset_from_current_layer: parent_info.offset_from_current_layer + stacking_context.bounds.origin,
+                    offset_from_origin: parent_info.offset_from_origin +
+                        stacking_context.bounds.origin,
+                    offset_from_current_layer: parent_info.offset_from_current_layer +
+                        stacking_context.bounds.origin,
                     default_scroll_layer_id: parent_info.default_scroll_layer_id,
                     actual_scroll_layer_id: parent_info.default_scroll_layer_id,
                     fixed_scroll_layer_id: parent_info.fixed_scroll_layer_id,
@@ -756,6 +781,7 @@ impl Frame {
                     local_transform: local_transform,
                     local_perspective: local_perspective,
                     world_transform: world_transform,
+                    layer_transform_for_children: parent_info.layer_transform_for_children,
                     pipeline_id: parent_info.pipeline_id,
                 };
 
@@ -789,23 +815,34 @@ impl Frame {
                             viewport_transform = viewport_transform.reset_after_transforming_rect()
                         }
 
-                        let layer = Layer::new(parent_info.offset_from_origin,
-                                               stacking_context.overflow.size,
-                                               &viewport_rect,
-                                               &viewport_transform,
-                                               &local_transform,
-                                               &local_perspective,
-                                               parent_info.pipeline_id,
-                                               stacking_context.servo_id);
+                        let mut layer = Layer::new(parent_info.offset_from_origin,
+                                                   stacking_context.overflow.size,
+                                                   &viewport_rect,
+                                                   &viewport_transform,
+                                                   &local_transform,
+                                                   &local_perspective,
+                                                   parent_info.pipeline_id,
+                                                   stacking_context.servo_id,
+                                                   context.old_layer_scrolling_states
+                                                          .get(&scroll_layer_id));
                         if parent_info.actual_scroll_layer_id != scroll_layer_id {
-                            self.layers.get_mut(&parent_info.actual_scroll_layer_id).unwrap().add_child(scroll_layer_id);
+                            self.layers
+                                .get_mut(&parent_info.actual_scroll_layer_id)
+                                .unwrap()
+                                .add_child(scroll_layer_id);
                         }
-                        self.layers.insert(scroll_layer_id, layer);
                         info.viewport_rect = viewport_rect;
                         info.viewport_transform = viewport_transform;
                         info.default_scroll_layer_id = scroll_layer_id;
                         info.actual_scroll_layer_id = scroll_layer_id;
                         info.offset_from_current_layer = Point2D::zero();
+
+                        // Update the layer transform for scrolling, etc.
+                        info.layer_transform_for_children =
+                            self.update_layer_transform(&mut layer,
+                                                        &info.layer_transform_for_children);
+
+                        self.layers.insert(scroll_layer_id, layer);
                     }
                     (ScrollPolicy::Scrollable, None) => {
                         // Nothing to do - use defaults as set above.
@@ -817,7 +854,8 @@ impl Frame {
                                          &info,
                                          context,
                                          stacking_context.overflow,
-                                         composition_operations);
+                                         composition_operations,
+                                         level);
             }
         }
     }
@@ -827,60 +865,26 @@ impl Frame {
                  _thread_pool: &mut scoped_threadpool::Pool,
                  _device_pixel_ratio: f32)
                  -> RendererFrame {
-        self.update_layer_transforms();
         let frame = self.build_frame(resource_cache);
         resource_cache.expire_old_resources(self.id);
         frame
     }
 
-    fn update_layer_transform(&mut self,
-                              layer_id: ScrollLayerId,
-                              parent_world_transform: &Matrix4D<f32>) {
+    /// Returns the layer transform for children, if applicable.
+    fn update_layer_transform(&mut self, layer: &mut Layer, parent_world_transform: &Matrix4D<f32>)
+                              -> Matrix4D<f32> {
         // TODO(gw): This is an ugly borrow check workaround to clone these.
         //           Restructure this to avoid the clones!
-        let (layer_transform_for_children, layer_children) = {
-            match self.layers.get_mut(&layer_id) {
-                Some(layer) => {
-                    let layer_transform_for_children =
-                        parent_world_transform.mul(&layer.local_transform)
-                                              .translate(layer.scrolling.offset.x,
-                                                         layer.scrolling.offset.y,
-                                                         0.0);
-                    layer.viewport_transform = parent_world_transform.mul(&layer.local_transform);
-                    layer.world_transform =
-                        Some(layer_transform_for_children.translate(layer.world_origin.x,
-                                                                    layer.world_origin.y,
-                                                                    0.0));
-                    (layer_transform_for_children, layer.children.clone())
-                }
-                None => return,
-            }
-        };
-
-        for child_layer_id in layer_children {
-            self.update_layer_transform(child_layer_id, &layer_transform_for_children);
-        }
-    }
-
-    fn update_layer_transforms(&mut self) {
-        if let Some(root_scroll_layer_id) = self.root_scroll_layer_id {
-            self.update_layer_transform(root_scroll_layer_id, &Matrix4D::identity());
-        }
-
-        // Update any fixed layers
-        let mut fixed_layers = Vec::new();
-        for (layer_id, _) in &self.layers {
-            match layer_id.info {
-                ScrollLayerInfo::Scrollable(..) => {}
-                ScrollLayerInfo::Fixed => {
-                    fixed_layers.push(*layer_id);
-                }
-            }
-        }
-
-        for layer_id in fixed_layers {
-            self.update_layer_transform(layer_id, &Matrix4D::identity());
-        }
+        let layer_transform_for_children =
+            parent_world_transform.mul(&layer.local_transform)
+                                  .translate(layer.scrolling.offset.x,
+                                             layer.scrolling.offset.y,
+                                             0.0);
+        layer.viewport_transform = parent_world_transform.mul(&layer.local_transform);
+        layer.world_transform = Some(layer_transform_for_children.translate(layer.world_origin.x,
+                                                                            layer.world_origin.y,
+                                                                            0.0));
+        layer_transform_for_children
     }
 
     fn build_frame(&mut self,

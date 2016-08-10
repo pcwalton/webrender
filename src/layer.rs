@@ -35,8 +35,13 @@ impl Layer {
                local_transform: &Matrix4D<f32>,
                local_perspective: &Matrix4D<f32>,
                pipeline_id: PipelineId,
-               stacking_context_id: ServoStackingContextId)
+               stacking_context_id: ServoStackingContextId,
+               old_scrolling_state: Option<&ScrollingState>)
                -> Layer {
+        let scrolling = match old_scrolling_state {
+            Some(old_scrolling_state) => *old_scrolling_state,
+            None => ScrollingState::new(),
+        };
         Layer {
             scrolling: ScrollingState::new(),
             viewport_rect: *viewport_rect,
@@ -54,10 +59,6 @@ impl Layer {
 
     pub fn add_child(&mut self, child: ScrollLayerId) {
         self.children.push(child);
-    }
-
-    pub fn finalize(&mut self, scrolling: &ScrollingState) {
-        self.scrolling = *scrolling;
     }
 
     pub fn overscroll_amount(&self) -> Size2D<f32> {

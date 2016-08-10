@@ -123,7 +123,7 @@ pub struct ResourceCache {
     draw_lists: FreeList<DrawList>,
     font_templates: HashMap<FontKey, FontTemplate, BuildHasherDefault<FnvHasher>>,
     image_templates: HashMap<ImageKey, ImageResource, BuildHasherDefault<FnvHasher>>,
-    device_pixel_ratio: f32,
+    pub device_pixel_ratio: f32,
     enable_aa: bool,
 
     texture_cache: TextureCache,

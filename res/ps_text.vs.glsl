@@ -3,19 +3,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-struct Glyph {
+struct Text {
     PrimitiveInfo info;
+    int glyph_index;
+};
+
+struct Glyph {
+    vec4 local_rect;
     vec4 color;
     vec4 st_rect;
 };
 
 layout(std140) uniform Items {
-    Glyph glyphs[WR_MAX_PRIM_ITEMS];
+    Text texts[WR_MAX_PRIM_ITEMS];
+};
+
+layout(std140) uniform Glyphs {
+    Glyph glyphs[WR_MAX_GLYPHS];
 };
 
 void main(void) {
-    Glyph glyph = glyphs[gl_InstanceID];
-    VertexInfo vi = write_vertex(glyph.info);
+    Text text = texts[gl_InstanceID];
+    int glyphIndex = text.glyph_index;
+    Glyph glyph = glyphs[glyphIndex];
+    text.info.local_rect = glyph.local_rect;
+    VertexInfo vi = write_vertex(text.info);
 
     vec2 f = (vi.local_clamped_pos - vi.local_rect.p0) / (vi.local_rect.p1 - vi.local_rect.p0);
 
