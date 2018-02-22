@@ -146,6 +146,7 @@ extern crate euclid;
 extern crate fxhash;
 extern crate gleam;
 extern crate num_traits;
+extern crate pathfinder_font_renderer;
 extern crate plane_split;
 extern crate rayon;
 #[cfg(feature = "ron")]

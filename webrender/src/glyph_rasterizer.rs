@@ -14,6 +14,7 @@ use device::TextureFilter;
 use glyph_cache::{CachedGlyphInfo, GlyphCache};
 use gpu_cache::GpuCache;
 use internal_types::{FastHashSet, ResourceCacheError};
+use pathfinder_font_renderer;
 use platform::font::FontContext;
 use profiler::TextureCacheProfileCounters;
 use rayon::ThreadPool;
@@ -27,6 +28,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use texture_cache::{TextureCache, TextureCacheHandle};
 #[cfg(test)]
 use thread_profiler::register_thread_with_profiler;
+
+type PathfinderFontContext = pathfinder_font_renderer::FontContext<FontKey>;
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -261,6 +264,8 @@ pub struct FontContexts {
     // (in theory that's only the render backend thread so no contention expected either).
     shared_context: Mutex<FontContext>,
 
+    pathfinder_context: Box<Mutex<PathfinderFontContext>>,
+
     // Stored here as a convenience to get the current thread index.
     workers: Arc<ThreadPool>,
 }
@@ -287,6 +292,10 @@ impl FontContexts {
     /// Get access to the font context usable outside of the thread pool.
     pub fn lock_shared_context(&self) -> MutexGuard<FontContext> {
         self.shared_context.lock().unwrap()
+    }
+
+    pub fn lock_pathfinder_context(&self) -> MutexGuard<PathfinderFontContext> {
+        self.pathfinder_context.lock().unwrap()
     }
 
     // number of contexts associated to workers
@@ -335,10 +344,15 @@ impl GlyphRasterizer {
             contexts.push(Mutex::new(FontContext::new()?));
         }
 
+        let pathfinder_context = PathfinderFontContext::new().map_err(|_| {
+            ResourceCacheError::new("Failed to create the Pathfinder font context!".to_owned())
+        })?;
+
         Ok(GlyphRasterizer {
             font_contexts: Arc::new(FontContexts {
                 worker_contexts: contexts,
                 shared_context: Mutex::new(shared_context),
+                pathfinder_context: Box::new(Mutex::new(pathfinder_context)),
                 workers: Arc::clone(&workers),
             }),
             pending_glyphs: FastHashSet::default(),
@@ -368,6 +382,8 @@ impl GlyphRasterizer {
                 .lock_context(Some(i))
                 .add_font(&font_key, &template);
         }
+
+        font_contexts.lock_pathfinder_context().add_font(&font_key, &template);
     }
 
     pub fn delete_font(&mut self, font_key: FontKey) {
@@ -437,8 +453,11 @@ impl GlyphRasterizer {
             return;
         }
 
+        self.request_glyphs_from_pathfinder(glyphs);
+        /*
         let font_contexts = Arc::clone(&self.font_contexts);
         let glyph_tx = self.glyph_tx.clone();
+
         // spawn an async task to get off of the render backend thread as early as
         // possible and in that task use rayon's fork join dispatch to rasterize the
         // glyphs in the thread pool.
@@ -467,7 +486,45 @@ impl GlyphRasterizer {
                 .collect();
 
             glyph_tx.send(jobs).unwrap();
-        });
+        });*/
+    }
+
+    fn request_glyphs_from_pathfinder(&mut self, glyphs: Vec<GlyphRequest>) {
+        let mut font_context = self.font_contexts.lock_pathfinder_context();
+
+        let raster_jobs: Vec<_> = glyphs.into_iter().map(|glyph| {
+            let pathfinder_font_instance = pathfinder_font_renderer::FontInstance {
+                font_key: glyph.font.font_key.clone(),
+                size: glyph.font.size,
+            };
+            let pathfinder_subpixel_offset =
+                pathfinder_font_renderer::SubpixelOffset(glyph.key.subpixel_offset as u8);
+            let pathfinder_glyph_key =
+                pathfinder_font_renderer::GlyphKey::new(glyph.key.index,
+                                                        pathfinder_subpixel_offset);
+            let raster_result = match font_context.glyph_outline(&pathfinder_font_instance,
+                                                                 &pathfinder_glyph_key) {
+                Ok(outline) => {
+                    // TODO(pcwalton)
+                    eprintln!("request_glyphs_from_pathfinder(): Glyph outline {:?}/{:?} fetched \
+                               OK",
+                            glyph.key.index,
+                            glyph.key.subpixel_offset);
+                    None
+                }
+                Err(_) => {
+                    eprintln!("request_glyphs_from_pathfinder(): Failed to get glyph outline!");
+                    None
+                }
+            };
+
+            GlyphRasterJob {
+                request: glyph,
+                result: raster_result
+            }
+        }).collect();
+
+        drop(self.glyph_tx.send(raster_jobs));
     }
 
     pub fn get_glyph_dimensions(
@@ -588,7 +645,11 @@ impl GlyphRasterizer {
     }
 }
 
-impl FontContext {
+trait AddFont {
+    fn add_font(&mut self, font_key: &FontKey, template: &FontTemplate);
+}
+
+impl AddFont for FontContext {
     fn add_font(&mut self, font_key: &FontKey, template: &FontTemplate) {
         match template {
             &FontTemplate::Raw(ref bytes, index) => {
@@ -596,6 +657,22 @@ impl FontContext {
             }
             &FontTemplate::Native(ref native_font_handle) => {
                 self.add_native_font(&font_key, (*native_font_handle).clone());
+            }
+        }
+    }
+}
+
+impl AddFont for PathfinderFontContext {
+    fn add_font(&mut self, font_key: &FontKey, template: &FontTemplate) {
+        match template {
+            &FontTemplate::Raw(ref bytes, index) => {
+                if self.add_font_from_memory(&font_key, bytes.clone(), index).is_err() {
+                    eprintln!("PathfinderFontContext::add_font(): couldn't add font from memory!");
+                }
+                eprintln!("PathfinderFontContext::add_font(): added font from memory OK");
+            }
+            &FontTemplate::Native(_) => {
+                eprintln!("PathfinderFontContext::add_font(): couldn't add native font!");
             }
         }
     }

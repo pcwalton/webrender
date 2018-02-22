@@ -39,6 +39,9 @@ image = { optional = true, version = "0.17" }
 base64 = { optional = true, version = "0.3.0" }
 ron = { optional = true, version = "0.1.7" }
 
+[dependencies.pathfinder_font_renderer]
+path = "/Users/pcwalton/Source/rust-packages/pathfinder/font-renderer"
+
 [dev-dependencies]
 angle = {git = "https://github.com/servo/angle", branch = "servo"}
 env_logger = "0.5"
