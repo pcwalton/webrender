@@ -11,14 +11,17 @@ use api::{GlyphDimensions, GlyphKey, SubpixelDirection};
 use api::{ImageData, ImageDescriptor, ImageFormat, LayerToWorldTransform};
 use app_units::Au;
 use device::TextureFilter;
+use euclid::TypedSize2D;
 use glyph_cache::{CachedGlyphInfo, GlyphCache};
 use gpu_cache::GpuCache;
 use internal_types::{FastHashSet, ResourceCacheError};
 use pathfinder_font_renderer;
+use pathfinder_partitioner::mesh_library::MeshLibrary;
 use platform::font::FontContext;
 use profiler::TextureCacheProfileCounters;
 use rayon::ThreadPool;
 use rayon::prelude::*;
+use render_task::{RenderTaskCache, RenderTaskCacheKey, RenderTaskCacheKeyKind, RenderTaskTree};
 use std::cmp;
 use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
@@ -28,6 +31,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use texture_cache::{TextureCache, TextureCacheHandle};
 #[cfg(test)]
 use thread_profiler::register_thread_with_profiler;
+use webrender_api::DevicePixel;
 
 type PathfinderFontContext = pathfinder_font_renderer::FontContext<FontKey>;
 
@@ -329,6 +333,8 @@ pub struct GlyphRasterizer {
     // - we don't have to worry about the ordering of events if a font is used on
     //   a frame where it is used (although it seems unlikely).
     fonts_to_remove: Vec<FontKey>,
+
+    pathfinder_mesh_library: MeshLibrary,
 }
 
 impl GlyphRasterizer {
@@ -360,6 +366,7 @@ impl GlyphRasterizer {
             glyph_tx,
             workers,
             fonts_to_remove: Vec::new(),
+            pathfinder_mesh_library: MeshLibrary::new(),
         })
     }
 
@@ -491,6 +498,7 @@ impl GlyphRasterizer {
 
     fn request_glyphs_from_pathfinder(&mut self, glyphs: Vec<GlyphRequest>) {
         let mut font_context = self.font_contexts.lock_pathfinder_context();
+        let mut mesh_library = MeshLibrary::new();
 
         let raster_jobs: Vec<_> = glyphs.into_iter().map(|glyph| {
             let pathfinder_font_instance = pathfinder_font_renderer::FontInstance {
@@ -502,19 +510,27 @@ impl GlyphRasterizer {
             let pathfinder_glyph_key =
                 pathfinder_font_renderer::GlyphKey::new(glyph.key.index,
                                                         pathfinder_subpixel_offset);
-            let raster_result = match font_context.glyph_outline(&pathfinder_font_instance,
-                                                                 &pathfinder_glyph_key) {
-                Ok(outline) => {
+            let raster_result = match (font_context.glyph_outline(&pathfinder_font_instance,
+                                                                  &pathfinder_glyph_key),
+                                       font_context.glyph_dimensions(&pathfinder_font_instance,
+                                                                     &pathfinder_glyph_key,
+                                                                     false)) {
+                (Ok(outline), Ok(dimensions)) => {
                     // TODO(pcwalton)
                     eprintln!("request_glyphs_from_pathfinder(): Glyph outline {:?}/{:?} fetched \
                                OK",
                             glyph.key.index,
                             glyph.key.subpixel_offset);
-                    None
+                    let path_id = self.pathfinder_mesh_library.next_path_id();
+                    mesh_library.push_stencil_segments(path_id, outline.iter());
+                    mesh_library.push_stencil_normals(path_id, outline.iter());
+                    let glyph_size = TypedSize2D::from_untyped(&dimensions.size.to_i32());
+                    GlyphRasterResult::Mesh(path_id, glyph_size)
                 }
-                Err(_) => {
+                _ => {
                     eprintln!("request_glyphs_from_pathfinder(): Failed to get glyph outline!");
-                    None
+                    // TODO(pcwalton): Fall back to CPU rendering.
+                    GlyphRasterResult::LoadFailed
                 }
             };
 
@@ -548,6 +564,8 @@ impl GlyphRasterizer {
         glyph_cache: &mut GlyphCache,
         texture_cache: &mut TextureCache,
         gpu_cache: &mut GpuCache,
+        render_task_cache: &mut RenderTaskCache,
+        render_tasks: &mut RenderTaskTree,
         _texture_cache_profile: &mut TextureCacheProfileCounters,
     ) {
         let mut rasterized_glyphs = Vec::with_capacity(self.pending_glyphs.len());
@@ -579,8 +597,12 @@ impl GlyphRasterizer {
 
         // Update the caches.
         for job in rasterized_glyphs {
-            let glyph_info = job.result
-                .and_then(|glyph| if glyph.width > 0 && glyph.height > 0 {
+            let glyph_info = match job.result {
+                GlyphRasterResult::LoadFailed => None,
+                GlyphRasterResult::Bitmap(ref glyph) if glyph.width == 0 || glyph.height == 0 => {
+                    None
+                }
+                GlyphRasterResult::Bitmap(glyph) => {
                     assert_eq!((glyph.left.fract(), glyph.top.fract()), (0.0, 0.0));
                     let glyph_bytes = Arc::new(glyph.bytes);
                     let mut texture_cache_handle = TextureCacheHandle::new();
@@ -609,12 +631,26 @@ impl GlyphRasterizer {
                         scale: glyph.scale,
                         format: glyph.format,
                     })
-                } else {
+                }
+                GlyphRasterResult::Mesh(path_id, dimensions) => {
+                    // TODO(pcwalton)
+                    let render_task_cache_key = RenderTaskCacheKey {
+                        size: dimensions,
+                        kind: RenderTaskCacheKeyKind::Glyph(GpuGlyphCacheKey {
+                            path_id: path_id,
+                        }),
+                    };
+                    let mesh_library = self.pathfinder_mesh_library.clone();
+                    render_task_cache.request_render_task(render_task_cache_key,
+                                                          texture_cache,
+                                                          gpu_cache,
+                                                          render_tasks,
+                                                          |render_tasks| unreachable!());
                     None
-                });
+                }
+            };
 
             let glyph_key_cache = glyph_cache.get_glyph_key_cache_for_font_mut(job.request.font);
-
             glyph_key_cache.insert(job.request.key, Ok(glyph_info));
         }
 
@@ -697,7 +733,20 @@ impl GlyphRequest {
 
 struct GlyphRasterJob {
     request: GlyphRequest,
-    result: Option<RasterizedGlyph>,
+    result: GlyphRasterResult,
+}
+
+enum GlyphRasterResult {
+    LoadFailed,
+    Bitmap(RasterizedGlyph),
+    Mesh(u16, TypedSize2D<i32, DevicePixel>),
+}
+
+#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct GpuGlyphCacheKey {
+    pub path_id: u16,
 }
 
 #[test]

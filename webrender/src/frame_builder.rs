@@ -1873,7 +1873,9 @@ impl FrameBuilder {
         );
 
         let mut passes = Vec::new();
-        resource_cache.block_until_all_resources_added(gpu_cache, texture_cache_profile);
+        resource_cache.block_until_all_resources_added(gpu_cache,
+                                                       &mut render_tasks,
+                                                       texture_cache_profile);
 
         if let Some(main_render_task_id) = main_render_task_id {
             let mut required_pass_count = 0;

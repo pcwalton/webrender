@@ -8,6 +8,7 @@ use box_shadow::BoxShadowCacheKey;
 use clip::ClipWorkItem;
 use clip_scroll_tree::CoordinateSystemId;
 use device::TextureFilter;
+use glyph_rasterizer::GpuGlyphCacheKey;
 use gpu_cache::GpuCache;
 use gpu_types::PictureType;
 use internal_types::{FastHashMap, SavedTargetIndex, SourceTexture};
@@ -656,6 +657,7 @@ impl RenderTask {
 pub enum RenderTaskCacheKeyKind {
     BoxShadow(BoxShadowCacheKey),
     Image(ImageCacheKey),
+    Glyph(GpuGlyphCacheKey),
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
