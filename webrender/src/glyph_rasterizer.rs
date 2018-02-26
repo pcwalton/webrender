@@ -12,7 +12,7 @@ use api::{ImageData, ImageDescriptor, ImageFormat, LayerToWorldTransform};
 use app_units::Au;
 use device::TextureFilter;
 use euclid::TypedSize2D;
-use glyph_cache::{CachedGlyphInfo, GlyphCache};
+use glyph_cache::{CachedGlyphData, CachedGlyphInfo, GlyphCache};
 use gpu_cache::GpuCache;
 use internal_types::{FastHashSet, ResourceCacheError};
 use pathfinder_font_renderer;
@@ -21,16 +21,18 @@ use platform::font::FontContext;
 use profiler::TextureCacheProfileCounters;
 use rayon::ThreadPool;
 use rayon::prelude::*;
-use render_task::{RenderTaskCache, RenderTaskCacheKey, RenderTaskCacheKeyKind, RenderTaskTree};
+use render_task::{RenderTask, RenderTaskCache, RenderTaskCacheKey, RenderTaskCacheKeyKind};
+use render_task::{RenderTaskLocation, RenderTaskTree};
 use std::cmp;
 use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 use std::mem;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use texture_cache::{TextureCache, TextureCacheHandle};
 #[cfg(test)]
 use thread_profiler::register_thread_with_profiler;
+use tiling::{RenderPass, RenderTargetKind};
 use webrender_api::DevicePixel;
 
 type PathfinderFontContext = pathfinder_font_renderer::FontContext<FontKey>;
@@ -334,7 +336,7 @@ pub struct GlyphRasterizer {
     //   a frame where it is used (although it seems unlikely).
     fonts_to_remove: Vec<FontKey>,
 
-    pathfinder_mesh_library: MeshLibrary,
+    pathfinder_mesh_library: Arc<RwLock<MeshLibrary>>,
 }
 
 impl GlyphRasterizer {
@@ -366,7 +368,7 @@ impl GlyphRasterizer {
             glyph_tx,
             workers,
             fonts_to_remove: Vec::new(),
-            pathfinder_mesh_library: MeshLibrary::new(),
+            pathfinder_mesh_library: Arc::new(RwLock::new(MeshLibrary::new())),
         })
     }
 
@@ -424,26 +426,28 @@ impl GlyphRasterizer {
                 Entry::Occupied(mut entry) => {
                     if let Ok(Some(ref mut glyph_info)) = *entry.get_mut() {
                         if texture_cache.request(&mut glyph_info.texture_cache_handle, gpu_cache) {
-                            // This case gets hit when we have already rasterized
-                            // the glyph and stored it in CPU memory, the the glyph
-                            // has been evicted from the texture cache. In which case
-                            // we need to re-upload it to the GPU.
-                            texture_cache.update(
-                                &mut glyph_info.texture_cache_handle,
-                                ImageDescriptor {
-                                    width: glyph_info.size.width,
-                                    height: glyph_info.size.height,
-                                    stride: None,
-                                    format: ImageFormat::BGRA8,
-                                    is_opaque: false,
-                                    offset: 0,
-                                },
-                                TextureFilter::Linear,
-                                Some(ImageData::Raw(glyph_info.glyph_bytes.clone())),
-                                [glyph_info.offset.x, glyph_info.offset.y, glyph_info.scale],
-                                None,
-                                gpu_cache,
-                            );
+                            if let CachedGlyphData::Memory(ref bytes) = glyph_info.glyph_bytes {
+                                // This case gets hit when we have already rasterized
+                                // the glyph and stored it in CPU memory, the the glyph
+                                // has been evicted from the texture cache. In which case
+                                // we need to re-upload it to the GPU.
+                                texture_cache.update(
+                                    &mut glyph_info.texture_cache_handle,
+                                    ImageDescriptor {
+                                        width: glyph_info.size.width,
+                                        height: glyph_info.size.height,
+                                        stride: None,
+                                        format: ImageFormat::BGRA8,
+                                        is_opaque: false,
+                                        offset: 0,
+                                    },
+                                    TextureFilter::Linear,
+                                    Some(ImageData::Raw((*bytes).clone())),
+                                    [glyph_info.offset.x, glyph_info.offset.y, glyph_info.scale],
+                                    None,
+                                    gpu_cache,
+                                );
+                            }
                         }
                     }
                 }
@@ -498,7 +502,7 @@ impl GlyphRasterizer {
 
     fn request_glyphs_from_pathfinder(&mut self, glyphs: Vec<GlyphRequest>) {
         let mut font_context = self.font_contexts.lock_pathfinder_context();
-        let mut mesh_library = MeshLibrary::new();
+        let mut mesh_library = self.pathfinder_mesh_library.write().unwrap();
 
         let raster_jobs: Vec<_> = glyphs.into_iter().map(|glyph| {
             let pathfinder_font_instance = pathfinder_font_renderer::FontInstance {
@@ -521,10 +525,11 @@ impl GlyphRasterizer {
                                OK",
                             glyph.key.index,
                             glyph.key.subpixel_offset);
-                    let path_id = self.pathfinder_mesh_library.next_path_id();
+                    let path_id = mesh_library.next_path_id();
                     mesh_library.push_stencil_segments(path_id, outline.iter());
                     mesh_library.push_stencil_normals(path_id, outline.iter());
                     let glyph_size = TypedSize2D::from_untyped(&dimensions.size.to_i32());
+                    println!("request_glyphs_from_pathfinder(): glyph size={:?}", glyph_size);
                     GlyphRasterResult::Mesh(path_id, glyph_size)
                 }
                 _ => {
@@ -566,6 +571,7 @@ impl GlyphRasterizer {
         gpu_cache: &mut GpuCache,
         render_task_cache: &mut RenderTaskCache,
         render_tasks: &mut RenderTaskTree,
+        glyph_pass: &mut RenderPass,
         _texture_cache_profile: &mut TextureCacheProfileCounters,
     ) {
         let mut rasterized_glyphs = Vec::with_capacity(self.pending_glyphs.len());
@@ -625,7 +631,7 @@ impl GlyphRasterizer {
                     );
                     Some(CachedGlyphInfo {
                         texture_cache_handle,
-                        glyph_bytes,
+                        glyph_bytes: CachedGlyphData::Memory(glyph_bytes),
                         size: DeviceUintSize::new(glyph.width, glyph.height),
                         offset: DevicePoint::new(glyph.left, -glyph.top),
                         scale: glyph.scale,
@@ -641,12 +647,33 @@ impl GlyphRasterizer {
                         }),
                     };
                     let mesh_library = self.pathfinder_mesh_library.clone();
-                    render_task_cache.request_render_task(render_task_cache_key,
-                                                          texture_cache,
-                                                          gpu_cache,
-                                                          render_tasks,
-                                                          |render_tasks| unreachable!());
-                    None
+                    let texture_cache_handle =
+                        render_task_cache.request_render_task(render_task_cache_key,
+                                                              texture_cache,
+                                                              gpu_cache,
+                                                              render_tasks,
+                                                              |render_tasks| {
+                            let location = RenderTaskLocation::Dynamic(None, dimensions);
+                            let glyph_render_task = RenderTask::new_glyph(location, path_id);
+                            let root_task_id = render_tasks.add(glyph_render_task);
+                            // FIXME(pcwalton): Support non-alpha glyphs.
+                            glyph_pass.add_render_task(root_task_id,
+                                                       dimensions,
+                                                       RenderTargetKind::Alpha);
+                            eprintln!("resolve_glyphs(): added task ID {:?}", root_task_id);
+                            (root_task_id, [0.0, 0.0, 1.0], false)
+                        });
+                    eprintln!("resolve_glyphs(): requesting render task for mesh: size={:?}",
+                              dimensions);
+                    // FIXME(pcwalton): Choose the right glyph format.
+                    Some(CachedGlyphInfo {
+                        texture_cache_handle: texture_cache_handle,
+                        glyph_bytes: CachedGlyphData::Gpu,
+                        size: TypedSize2D::new(dimensions.width as u32, dimensions.height as u32),
+                        offset: DevicePoint::zero(),
+                        scale: 1.0,
+                        format: GlyphFormat::Alpha,
+                    })
                 }
             };
 

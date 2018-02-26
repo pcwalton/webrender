@@ -40,7 +40,7 @@ use std::mem;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use texture_cache::{TextureCache, TextureCacheHandle};
-
+use tiling::RenderPass;
 
 const DEFAULT_TILE_SIZE: TileSize = 512;
 
@@ -321,13 +321,14 @@ impl ResourceCache {
         render_tasks: &mut RenderTaskTree,
         f: F,
     ) -> CacheItem where F: FnMut(&mut RenderTaskTree) -> (RenderTaskId, [f32; 3], bool) {
-        self.cached_render_tasks.request_render_task(
+        let texture_cache_handle = self.cached_render_tasks.request_render_task(
             key,
             &mut self.texture_cache,
             gpu_cache,
             render_tasks,
             f
-        )
+        );
+        self.texture_cache.get(&texture_cache_handle)
     }
 
     pub fn update_resources(
@@ -800,6 +801,7 @@ impl ResourceCache {
         &mut self,
         gpu_cache: &mut GpuCache,
         render_tasks: &mut RenderTaskTree,
+        glyph_pass: &mut RenderPass,
         texture_cache_profile: &mut TextureCacheProfileCounters,
     ) {
         profile_scope!("block_until_all_resources_added");
@@ -813,6 +815,7 @@ impl ResourceCache {
             gpu_cache,
             &mut self.cached_render_tasks,
             render_tasks,
+            glyph_pass,
             texture_cache_profile,
         );
 

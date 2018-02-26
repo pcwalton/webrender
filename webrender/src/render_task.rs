@@ -74,7 +74,7 @@ impl RenderTaskTree {
         &self,
         id: RenderTaskId,
         pass_index: usize,
-        passes: &mut Vec<RenderPass>,
+        passes: &mut [RenderPass],
     ) {
         let task = &self.tasks[id.0 as usize];
 
@@ -185,6 +185,13 @@ impl BlurTask {
     }
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct GlyphTask {
+    pub path_id: u16,
+}
+
 // Where the source data for a blit task can be found.
 #[derive(Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -220,6 +227,7 @@ pub enum RenderTaskKind {
     CacheMask(CacheMaskTask),
     VerticalBlur(BlurTask),
     HorizontalBlur(BlurTask),
+    Glyph(GlyphTask),
     Readback(DeviceIntRect),
     Scaling(RenderTargetKind),
     Blit(BlitTask),
@@ -425,6 +433,18 @@ impl RenderTask {
         }
     }
 
+    pub fn new_glyph(location: RenderTaskLocation, path_id: u16) -> Self {
+        RenderTask {
+            children: vec![],
+            location: location,
+            kind: RenderTaskKind::Glyph(GlyphTask {
+                path_id: path_id,
+            }),
+            clear_mode: ClearMode::Transparent,
+            saved_index: None,
+        }
+    }
+
     // Write (up to) 8 floats of data specific to the type
     // of render task that is provided to the GPU shaders
     // via a vertex texture.
@@ -476,6 +496,16 @@ impl RenderTask {
                         0.0,
                     ],
                     task.color.to_array()
+                )
+            }
+            RenderTaskKind::Glyph(ref task) => {
+                (
+                    [
+                        task.path_id as f32,
+                        0.0,
+                        0.0,
+                    ],
+                    [0.0; 4],
                 )
             }
             RenderTaskKind::Readback(..) |
@@ -560,6 +590,11 @@ impl RenderTask {
                 task_info.target_kind
             }
 
+            RenderTaskKind::Glyph(..) => {
+                // FIXME(pcwalton): Support color.
+                RenderTargetKind::Alpha
+            }
+
             RenderTaskKind::Scaling(target_kind) => {
                 target_kind
             }
@@ -587,7 +622,8 @@ impl RenderTask {
             RenderTaskKind::Readback(..) |
             RenderTaskKind::HorizontalBlur(..) |
             RenderTaskKind::Scaling(..) |
-            RenderTaskKind::Blit(..) => false,
+            RenderTaskKind::Blit(..) |
+            RenderTaskKind::Glyph(..) => false,
             RenderTaskKind::CacheMask(..) => true,
         }
     }
@@ -722,7 +758,7 @@ impl RenderTaskCache {
         gpu_cache: &mut GpuCache,
         render_tasks: &mut RenderTaskTree,
         mut f: F,
-    ) -> CacheItem where F: FnMut(&mut RenderTaskTree) -> (RenderTaskId, [f32; 3], bool) {
+    ) -> TextureCacheHandle where F: FnMut(&mut RenderTaskTree) -> (RenderTaskId, [f32; 3], bool) {
         // Get the texture cache handle for this cache key,
         // or create one.
         let cache_entry = self.entries
@@ -791,6 +827,6 @@ impl RenderTaskCache {
 
         // Finally, return the texture cache handle that we know
         // is now up to date.
-        texture_cache.get(&cache_entry.handle)
+        cache_entry.handle.clone()
     }
 }

@@ -71,7 +71,7 @@ use texture_cache::TextureCache;
 use thread_profiler::{register_thread_with_profiler, write_profile};
 use tiling::{AlphaRenderTarget, ColorRenderTarget};
 use tiling::{BlitJob, BlitJobSource, RenderPass, RenderPassKind, RenderTargetList};
-use tiling::{Frame, RenderTarget, ScalingInfo, TextureCacheRenderTarget};
+use tiling::{Frame, GlyphJob, RenderTarget, ScalingInfo, TextureCacheRenderTarget};
 use time::precise_time_ns;
 use util::TransformedRectKind;
 
@@ -171,6 +171,10 @@ const GPU_TAG_BLUR: GpuProfileTag = GpuProfileTag {
 const GPU_TAG_BLIT: GpuProfileTag = GpuProfileTag {
     label: "Blit",
     color: debug_colors::LIME,
+};
+const GPU_TAG_GLYPH: GpuProfileTag = GpuProfileTag {
+    label: "Glyph",
+    color: debug_colors::STEELBLUE,
 };
 
 const GPU_SAMPLER_TAG_ALPHA: GpuProfileTag = GpuProfileTag {
@@ -2982,7 +2986,7 @@ impl Renderer {
         // For an artificial stress test of GPU cache resizing,
         // always pass an extra update list with at least one block in it.
         let gpu_cache_height = self.gpu_cache_texture.get_height();
-        if gpu_cache_height != 0 &&  GPU_CACHE_RESIZE_TEST {
+        if gpu_cache_height != 0 && GPU_CACHE_RESIZE_TEST {
             self.pending_gpu_cache_updates.push(GpuCacheUpdateList {
                 frame_id: FrameId::new(0),
                 height: gpu_cache_height,
@@ -2998,7 +3002,7 @@ impl Renderer {
                 (count + list.blocks.len(), cmp::max(height, list.height))
             });
 
-        //Note: if we decide to switch to scatter-style GPU cache update
+        // Note: if we decide to switch to scatter-style GPU cache update
         // permanently, we can have this code nicer with `BufferUploader` kind
         // of helper, similarly to how `TextureUploader` API is used.
         self.gpu_cache_texture.prepare_for_updates(
@@ -3008,6 +3012,7 @@ impl Renderer {
         );
 
         for update_list in self.pending_gpu_cache_updates.drain(..) {
+            eprintln!("updating GPU cache: {:#?}", update_list.blocks);
             assert!(update_list.height <= max_requested_height);
             if update_list.frame_id > self.gpu_cache_frame_id {
                 self.gpu_cache_frame_id = update_list.frame_id
@@ -3487,6 +3492,49 @@ impl Renderer {
         }
     }
 
+    fn handle_glyphs(&mut self, glyphs: &[GlyphJob], render_tasks: &RenderTaskTree) {
+        if glyphs.is_empty() {
+            return
+        }
+
+        let _timer = self.gpu_profile.start_timer(GPU_TAG_GLYPH);
+
+        for glyph in glyphs {
+            println!("glyph target rect: {:?}", glyph.target_rect);
+            //self.device.clear_target(Some([0.5, 0.5, 0.5, 0.5]), None, Some(glyph.target_rect));
+            self.device.clear_target(Some([0.5, 0.5, 0.5, 0.5]), None, Some(glyph.target_rect));
+            /*
+            let source_rect = match blit.source {
+                BlitJobSource::Texture(texture_id, layer, source_rect) => {
+                    // A blit from a texture into this target.
+                    let src_texture = self.texture_resolver
+                        .resolve(&texture_id)
+                        .expect("BUG: invalid source texture");
+                    self.device.bind_read_target(Some((src_texture, layer)));
+                    source_rect
+                }
+                BlitJobSource::RenderTask(task_id) => {
+                    // A blit from the child render task into this target.
+                    // TODO(gw): Support R8 format here once we start
+                    //           creating mips for alpha masks.
+                    let src_texture = self.texture_resolver
+                        .resolve(&SourceTexture::CacheRGBA8)
+                        .expect("BUG: invalid source texture");
+                    let source = &render_tasks[task_id];
+                    let (source_rect, layer) = source.get_target_rect();
+                    self.device.bind_read_target(Some((src_texture, layer.0 as i32)));
+                    source_rect
+                }
+            };
+            debug_assert_eq!(source_rect.size, blit.target_rect.size);
+            self.device.blit_render_target(
+                source_rect,
+                blit.target_rect,
+            );
+            */
+        }
+    }
+
     fn draw_color_target(
         &mut self,
         render_target: Option<(&Texture, i32)>,
@@ -3683,6 +3731,9 @@ impl Renderer {
                         let _timer = self.gpu_profile.start_timer(GPU_TAG_PRIM_TEXT_RUN);
 
                         self.device.set_blend(true);
+
+                        eprintln!("drawing text run: blend mode={:?}", batch.key.blend_mode);
+                        eprintln!("... instances: {:#?}", batch.instances);
 
                         match batch.key.blend_mode {
                             BlendMode::Alpha => panic!("Attempt to composite non-premultiplied text primitives."),
@@ -4166,6 +4217,9 @@ impl Renderer {
                 stats,
             );
         }
+
+        // Handle any Pathfinder glyphs.
+        self.handle_glyphs(&target.glyphs, render_tasks);
     }
 
     fn update_deferred_resolves(&mut self, deferred_resolves: &[DeferredResolve]) -> Option<GpuCacheUpdateList> {

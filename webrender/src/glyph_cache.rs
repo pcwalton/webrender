@@ -20,7 +20,15 @@ pub struct GenericCachedGlyphInfo<D> {
     pub format: GlyphFormat,
 }
 
-pub type CachedGlyphInfo = GenericCachedGlyphInfo<Arc<Vec<u8>>>;
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+#[derive(Clone)]
+pub enum CachedGlyphData {
+    Memory(Arc<Vec<u8>>),
+    Gpu,
+}
+
+pub type CachedGlyphInfo = GenericCachedGlyphInfo<CachedGlyphData>;
 pub type GlyphKeyCache = ResourceClassCache<GlyphKey, Option<CachedGlyphInfo>>;
 
 #[cfg(any(feature = "capture", feature = "replay"))]

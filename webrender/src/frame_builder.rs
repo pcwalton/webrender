@@ -1872,9 +1872,12 @@ impl FrameBuilder {
             &node_data,
         );
 
-        let mut passes = Vec::new();
+        let screen_size = self.screen_rect.size.to_i32();
+        let mut passes = vec![RenderPass::new_off_screen(screen_size)];
+
         resource_cache.block_until_all_resources_added(gpu_cache,
                                                        &mut render_tasks,
+                                                       &mut passes[0],
                                                        texture_cache_profile);
 
         if let Some(main_render_task_id) = main_render_task_id {
@@ -1885,14 +1888,14 @@ impl FrameBuilder {
             // Do the allocations now, assigning each tile's tasks to a render
             // pass and target as required.
             for _ in 0 .. required_pass_count - 1 {
-                passes.push(RenderPass::new_off_screen(self.screen_rect.size.to_i32()));
+                passes.push(RenderPass::new_off_screen(screen_size));
             }
-            passes.push(RenderPass::new_main_framebuffer(self.screen_rect.size.to_i32()));
+            passes.push(RenderPass::new_main_framebuffer(screen_size));
 
             render_tasks.assign_to_passes(
                 main_render_task_id,
                 required_pass_count - 1,
-                &mut passes,
+                &mut passes[1..],
             );
         }
 

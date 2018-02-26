@@ -264,6 +264,13 @@ pub struct BlitJob {
     pub target_rect: DeviceIntRect,
 }
 
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct GlyphJob {
+    pub path_id: u16,
+    pub target_rect: DeviceIntRect,
+}
+
 /// A render target represents a number of rendering operations on a surface.
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -408,6 +415,10 @@ impl RenderTarget for ColorRenderTarget {
             RenderTaskKind::CacheMask(..) => {
                 panic!("Should not be added to color target!");
             }
+            RenderTaskKind::Glyph(..) => {
+                // FIXME(pcwalton): Support color glyphs.
+                panic!("Glyphs should not be added to color target!");
+            }
             RenderTaskKind::Readback(device_rect) => {
                 self.readbacks.push(device_rect);
             }
@@ -535,7 +546,8 @@ impl RenderTarget for AlphaRenderTarget {
 
         match task.kind {
             RenderTaskKind::Readback(..) |
-            RenderTaskKind::Blit(..) => {
+            RenderTaskKind::Blit(..) |
+            RenderTaskKind::Glyph(..) => {
                 panic!("BUG: should not be added to alpha target!");
             }
             RenderTaskKind::VerticalBlur(ref info) => {
@@ -660,6 +672,7 @@ impl RenderTarget for AlphaRenderTarget {
 pub struct TextureCacheRenderTarget {
     pub horizontal_blurs: Vec<BlurInstance>,
     pub blits: Vec<BlitJob>,
+    pub glyphs: Vec<GlyphJob>,
 }
 
 impl TextureCacheRenderTarget {
@@ -668,8 +681,9 @@ impl TextureCacheRenderTarget {
         _screen_size: DeviceIntSize,
     ) -> Self {
         TextureCacheRenderTarget {
-            horizontal_blurs: Vec::new(),
-            blits: Vec::new(),
+            horizontal_blurs: vec![],
+            blits: vec![],
+            glyphs: vec![],
         }
     }
 
@@ -707,6 +721,12 @@ impl TextureCacheRenderTarget {
                         });
                     }
                 }
+            }
+            RenderTaskKind::Glyph(ref task_info) => {
+                self.glyphs.push(GlyphJob {
+                    path_id: task_info.path_id,
+                    target_rect: task.get_target_rect().0,
+                });
             }
             RenderTaskKind::VerticalBlur(..) |
             RenderTaskKind::Picture(..) |
@@ -793,6 +813,9 @@ impl RenderPass {
         match self.kind {
             RenderPassKind::MainFramebuffer(ref mut target) => {
                 for &task_id in &self.tasks {
+                    println!("RenderPass::build(): MainFramebuffer: stepping through task ID \
+                              {:?}",
+                             task_id);
                     assert_eq!(render_tasks[task_id].target_kind(), RenderTargetKind::Color);
                     target.add_task(
                         task_id,
@@ -831,6 +854,7 @@ impl RenderPass {
 
                 // Step through each task, adding to batches as appropriate.
                 for &task_id in &self.tasks {
+                    println!("Offscreen: stepping through task ID {:?}", task_id);
                     let (target_kind, texture_target) = {
                         let task = &mut render_tasks[task_id];
                         let target_kind = task.target_kind();
