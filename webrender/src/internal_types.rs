@@ -6,7 +6,7 @@ use api::{ClipId, DeviceUintRect, DocumentId};
 use api::{ExternalImageData, ExternalImageId};
 use api::ImageFormat;
 use api::DebugCommand;
-use device::TextureFilter;
+use device::{ExternalTexture, Texture, TextureFilter};
 use renderer::PipelineInfo;
 use gpu_cache::GpuCacheUpdateList;
 use fxhash::FxHasher;
@@ -66,6 +66,7 @@ pub enum SourceTexture {
     CacheA8,
     CacheRGBA8,
     RenderTaskCache(SavedTargetIndex),
+    Custom(ExternalTexture),
 }
 
 pub const ORTHO_NEAR_PLANE: f32 = -1000000.0;

@@ -456,6 +456,23 @@ const DESC_CLIP: VertexDescriptor = VertexDescriptor {
     ],
 };
 
+const DESC_VECTOR: VertexDescriptor = VertexDescriptor {
+    vertex_attributes: &[
+        VertexAttribute {
+            name: "aPosition",
+            count: 2,
+            kind: VertexAttributeKind::F32,
+        },
+    ],
+    instance_attributes: &[
+        VertexAttribute {
+            name: "aPathID",
+            count: 1,
+            kind: VertexAttributeKind::U16,
+        },
+    ],
+};
+
 const DESC_GPU_CACHE_UPDATE: VertexDescriptor = VertexDescriptor {
     vertex_attributes: &[
         VertexAttribute {
@@ -477,6 +494,7 @@ enum VertexArrayKind {
     Primitive,
     Blur,
     Clip,
+    Vector,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -641,7 +659,7 @@ impl SourceTextureResolver {
     fn new(device: &mut Device) -> SourceTextureResolver {
         let mut dummy_cache_texture = device
             .create_texture(TextureTarget::Array, ImageFormat::BGRA8);
-        device.init_texture(
+        device.init_texture::<u8>(
             &mut dummy_cache_texture,
             1,
             1,
@@ -751,6 +769,9 @@ impl SourceTextureResolver {
                     .expect(&format!("BUG: External image should be resolved by now"));
                 device.bind_external_texture(sampler, texture);
             }
+            SourceTexture::Custom(external_texture) => {
+                device.bind_external_texture(sampler, &external_texture);
+            }
             SourceTexture::TextureCache(index) => {
                 let texture = &self.cache_texture_map[index.0];
                 device.bind_texture(sampler, texture);
@@ -780,7 +801,7 @@ impl SourceTextureResolver {
                     None => &self.dummy_cache_texture,
                 }
             ),
-            SourceTexture::External(..) => {
+            SourceTexture::External(..) | SourceTexture::Custom(..) => {
                 panic!("BUG: External textures cannot be resolved, they can only be bound.");
             }
             SourceTexture::TextureCache(index) => {
@@ -925,7 +946,7 @@ impl CacheTexture {
                 if max_height > old_size.height {
                     // Create a f32 texture that can be used for the vertex shader
                     // to fetch data from.
-                    device.init_texture(
+                    device.init_texture::<u8>(
                         &mut self.texture,
                         new_size.width,
                         new_size.height,
@@ -959,7 +980,7 @@ impl CacheTexture {
                     if old_size.height > 0 {
                         device.resize_renderable_texture(&mut self.texture, new_size);
                     } else {
-                        device.init_texture(
+                        device.init_texture::<u8>(
                             &mut self.texture,
                             new_size.width,
                             new_size.height,
@@ -1141,7 +1162,7 @@ impl VertexDataTexture {
         if needed_height > texture_size.height {
             let new_height = (needed_height + 127) & !127;
 
-            device.init_texture(
+            device.init_texture::<u8>(
                 &mut self.texture,
                 width,
                 new_height,
@@ -1176,6 +1197,7 @@ enum ShaderKind {
     ClipCache,
     Brush,
     Text,
+    Vector,
 }
 
 struct LazilyCompiledShader {
@@ -1251,6 +1273,12 @@ impl LazilyCompiledShader {
                                            device,
                                            &self.features,
                                            format)
+                    }
+                    ShaderKind::Vector => {
+                        create_prim_shader(self.name,
+                                           device,
+                                           &self.features,
+                                           VertexArrayKind::Vector)
                     }
                     ShaderKind::ClipCache => {
                         create_clip_shader(self.name, device)
@@ -1507,6 +1535,7 @@ fn create_prim_shader(
         VertexArrayKind::Primitive => DESC_PRIM_INSTANCES,
         VertexArrayKind::Blur => DESC_BLUR,
         VertexArrayKind::Clip => DESC_CLIP,
+        VertexArrayKind::Vector => DESC_VECTOR,
     };
 
     let program = device.create_program(name, &prefix, &vertex_descriptor);
@@ -1642,6 +1671,9 @@ pub struct Renderer {
     ps_hw_composite: LazilyCompiledShader,
     ps_split_composite: LazilyCompiledShader,
 
+    // These are Pathfinder shaders, used for rendering vector graphics.
+    pf_vector_stencil: LazilyCompiledShader,
+
     max_texture_size: u32,
 
     max_recorded_profiles: usize,
@@ -1658,6 +1690,7 @@ pub struct Renderer {
     prim_vao: VAO,
     blur_vao: VAO,
     clip_vao: VAO,
+    vector_vao: VAO,
 
     node_data_texture: VertexDataTexture,
     local_clip_rects_texture: VertexDataTexture,
@@ -2055,6 +2088,16 @@ impl Renderer {
                                      options.precache_shaders)
         };
 
+        // Load Pathfinder vector graphics shaders.
+
+        let pf_vector_stencil = try!{
+            LazilyCompiledShader::new(ShaderKind::Vector,
+                                      "pf_vector_stencil",
+                                      &[ImageBufferKind::Texture2D.get_feature_string()],
+                                      &mut device,
+                                      options.precache_shaders)
+        };
+
         let texture_cache = TextureCache::new(max_device_size);
         let max_texture_size = texture_cache.max_texture_size();
 
@@ -2167,6 +2210,7 @@ impl Renderer {
 
         let blur_vao = device.create_vao_with_new_instances(&DESC_BLUR, &prim_vao);
         let clip_vao = device.create_vao_with_new_instances(&DESC_CLIP, &prim_vao);
+        let vector_vao = device.create_vao_with_new_instances(&DESC_VECTOR, &prim_vao);
 
         let texture_cache_upload_pbo = device.create_pbo();
 
@@ -2323,6 +2367,7 @@ impl Renderer {
             ps_border_edge,
             ps_hw_composite,
             ps_split_composite,
+            pf_vector_stencil,
             debug: debug_renderer,
             debug_flags,
             backend_profile_counters: BackendProfileCounters::new(),
@@ -2337,6 +2382,7 @@ impl Renderer {
             prim_vao,
             blur_vao,
             clip_vao,
+            vector_vao,
             node_data_texture,
             local_clip_rects_texture,
             render_task_texture,
@@ -3069,7 +3115,7 @@ impl Renderer {
 
                         // Ensure no PBO is bound when creating the texture storage,
                         // or GL will attempt to read data from there.
-                        self.device.init_texture(
+                        self.device.init_texture::<u8>(
                             texture,
                             width,
                             height,
@@ -3160,6 +3206,7 @@ impl Renderer {
             VertexArrayKind::Primitive => &self.prim_vao,
             VertexArrayKind::Clip => &self.clip_vao,
             VertexArrayKind::Blur => &self.blur_vao,
+            VertexArrayKind::Vector => &self.vector_vao,
         };
 
         self.device.bind_vao(vao);
@@ -3492,17 +3539,56 @@ impl Renderer {
         }
     }
 
-    fn handle_glyphs(&mut self, glyphs: &[GlyphJob], render_tasks: &RenderTaskTree) {
+    /// Renders glyphs using the vector graphics shaders (Pathfinder).
+    fn handle_glyphs(&mut self,
+                     glyphs: &[GlyphJob],
+                     projection: &Transform3D<f32>,
+                     render_tasks: &RenderTaskTree,
+                     stats: &mut RendererStats) {
         if glyphs.is_empty() {
             return
         }
 
         let _timer = self.gpu_profile.start_timer(GPU_TAG_GLYPH);
 
+        // TODO(pcwalton): Cache this texture!
+        let mut path_transform_texture = self.device.create_texture(TextureTarget::Default,
+                                                                    ImageFormat::RGBAF32);
+
+        let mut path_transform_texels = Vec::with_capacity(glyphs.len() * 8);
         for glyph in glyphs {
-            println!("glyph target rect: {:?}", glyph.target_rect);
+            let rect = &glyph.target_rect;
+            path_transform_texels.extend_from_slice(&[
+                rect.size.width as f32, 0.0, 0.0, rect.size.height as f32,
+                rect.origin.x as f32, rect.origin.y as f32, 0.0, 0.0,
+            ]);
+        }
+
+        self.device.init_texture(&mut path_transform_texture,
+                                 2,
+                                 glyphs.len() as u32,
+                                 TextureFilter::Nearest,
+                                 None,
+                                 1,
+                                 Some(&path_transform_texels));
+
+        self.pf_vector_stencil.bind(&mut self.device,
+                                    projection,
+                                    0,
+                                    &mut self.renderer_errors);
+
+        let path_transform_external_texture = path_transform_texture.to_external();
+        let batch_textures =
+            BatchTextures::color(SourceTexture::Custom(path_transform_external_texture));
+        self.draw_instanced_batch(&(0..(glyphs.len() as u16)).collect::<Vec<u16>>(),
+                                  VertexArrayKind::Vector,
+                                  &batch_textures,
+                                  stats);
+
+        self.device.delete_texture(path_transform_texture);
+
+        //for glyph in glyphs {
             //self.device.clear_target(Some([0.5, 0.5, 0.5, 0.5]), None, Some(glyph.target_rect));
-            self.device.clear_target(Some([0.5, 0.5, 0.5, 0.5]), None, Some(glyph.target_rect));
             /*
             let source_rect = match blit.source {
                 BlitJobSource::Texture(texture_id, layer, source_rect) => {
@@ -3532,7 +3618,7 @@ impl Renderer {
                 blit.target_rect,
             );
             */
-        }
+        //}
     }
 
     fn draw_color_target(
@@ -4219,7 +4305,7 @@ impl Renderer {
         }
 
         // Handle any Pathfinder glyphs.
-        self.handle_glyphs(&target.glyphs, render_tasks);
+        self.handle_glyphs(&target.glyphs, &projection, render_tasks, stats);
     }
 
     fn update_deferred_resolves(&mut self, deferred_resolves: &[DeferredResolve]) -> Option<GpuCacheUpdateList> {
@@ -4356,7 +4442,7 @@ impl Renderer {
             }
         };
 
-        self.device.init_texture(
+        self.device.init_texture::<u8>(
             &mut texture,
             list.max_size.width,
             list.max_size.height,
