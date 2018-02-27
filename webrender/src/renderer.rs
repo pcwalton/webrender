@@ -466,9 +466,24 @@ const DESC_VECTOR: VertexDescriptor = VertexDescriptor {
     ],
     instance_attributes: &[
         VertexAttribute {
+            name: "aFrom",
+            count: 2,
+            kind: VertexAttributeKind::F32,
+        },
+        VertexAttribute {
+            name: "aCtrl",
+            count: 2,
+            kind: VertexAttributeKind::F32,
+        },
+        VertexAttribute {
+            name: "aTo",
+            count: 2,
+            kind: VertexAttributeKind::F32,
+        },
+        VertexAttribute {
             name: "aPathID",
             count: 1,
-            kind: VertexAttributeKind::U16,
+            kind: VertexAttributeKind::F32,
         },
     ],
 };
@@ -3586,39 +3601,6 @@ impl Renderer {
                                   stats);
 
         self.device.delete_texture(path_transform_texture);
-
-        //for glyph in glyphs {
-            //self.device.clear_target(Some([0.5, 0.5, 0.5, 0.5]), None, Some(glyph.target_rect));
-            /*
-            let source_rect = match blit.source {
-                BlitJobSource::Texture(texture_id, layer, source_rect) => {
-                    // A blit from a texture into this target.
-                    let src_texture = self.texture_resolver
-                        .resolve(&texture_id)
-                        .expect("BUG: invalid source texture");
-                    self.device.bind_read_target(Some((src_texture, layer)));
-                    source_rect
-                }
-                BlitJobSource::RenderTask(task_id) => {
-                    // A blit from the child render task into this target.
-                    // TODO(gw): Support R8 format here once we start
-                    //           creating mips for alpha masks.
-                    let src_texture = self.texture_resolver
-                        .resolve(&SourceTexture::CacheRGBA8)
-                        .expect("BUG: invalid source texture");
-                    let source = &render_tasks[task_id];
-                    let (source_rect, layer) = source.get_target_rect();
-                    self.device.bind_read_target(Some((src_texture, layer.0 as i32)));
-                    source_rect
-                }
-            };
-            debug_assert_eq!(source_rect.size, blit.target_rect.size);
-            self.device.blit_render_target(
-                source_rect,
-                blit.target_rect,
-            );
-            */
-        //}
     }
 
     fn draw_color_target(
