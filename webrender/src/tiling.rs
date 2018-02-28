@@ -15,6 +15,7 @@ use gpu_types::{BlurDirection, BlurInstance, BrushFlags, BrushInstance, ClipChai
 use gpu_types::{ClipScrollNodeData, ClipScrollNodeIndex};
 use gpu_types::{PrimitiveInstance};
 use internal_types::{FastHashMap, SavedTargetIndex, SourceTexture};
+use pathfinder_partitioner::mesh_library::MeshLibrary;
 use picture::{PictureKind};
 use prim_store::{CachedGradient, PrimitiveIndex, PrimitiveKind, PrimitiveStore};
 use prim_store::{BrushMaskKind, BrushKind, DeferredResolve, EdgeAaSegmentMask};
@@ -267,7 +268,7 @@ pub struct BlitJob {
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct GlyphJob {
-    pub path_id: u16,
+    pub mesh_library: MeshLibrary,
     pub target_rect: DeviceIntRect,
 }
 
@@ -723,8 +724,9 @@ impl TextureCacheRenderTarget {
                 }
             }
             RenderTaskKind::Glyph(ref task_info) => {
+                // FIXME(pcwalton): Avoid this copy!
                 self.glyphs.push(GlyphJob {
-                    path_id: task_info.path_id,
+                    mesh_library: task_info.mesh_library.clone(),
                     target_rect: task.get_target_rect().0,
                 });
             }

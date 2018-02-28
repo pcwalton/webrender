@@ -12,6 +12,7 @@ use glyph_rasterizer::GpuGlyphCacheKey;
 use gpu_cache::GpuCache;
 use gpu_types::PictureType;
 use internal_types::{FastHashMap, SavedTargetIndex, SourceTexture};
+use pathfinder_partitioner::mesh_library::MeshLibrary;
 use picture::ContentOrigin;
 use prim_store::{PrimitiveIndex, ImageCacheKey};
 #[cfg(feature = "debugger")]
@@ -189,7 +190,7 @@ impl BlurTask {
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct GlyphTask {
-    pub path_id: u16,
+    pub mesh_library: MeshLibrary,
 }
 
 // Where the source data for a blit task can be found.
@@ -433,12 +434,14 @@ impl RenderTask {
         }
     }
 
-    pub fn new_glyph(location: RenderTaskLocation, path_id: u16) -> Self {
+    pub fn new_glyph(location: RenderTaskLocation,
+                     mesh_library: MeshLibrary)
+                     -> Self {
         RenderTask {
             children: vec![],
             location: location,
             kind: RenderTaskKind::Glyph(GlyphTask {
-                path_id: path_id,
+                mesh_library: mesh_library,
             }),
             clear_mode: ClearMode::Transparent,
             saved_index: None,
@@ -501,7 +504,7 @@ impl RenderTask {
             RenderTaskKind::Glyph(ref task) => {
                 (
                     [
-                        task.path_id as f32,
+                        1.0,
                         0.0,
                         0.0,
                     ],

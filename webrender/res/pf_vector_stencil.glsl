@@ -6,14 +6,19 @@
 
 #ifdef WR_VERTEX_SHADER
 
+in vec2 aFrom;
+in vec2 aCtrl;
+in vec2 aTo;
 in int aPathID;
 
 void main(void) {
+    vec2 position = mix(aFrom, aTo, aPosition.xy);
+
     ivec2 pathAddress = ivec2(0.0, aPathID);
     mat2 transformLinear = mat2(TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(0, 0)));
     vec2 transformTranslation = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(1, 0)).xy;
 
-    vec2 position = transformLinear * aPosition.xy + transformTranslation;
+    position = transformLinear * position + transformTranslation;
 
     gl_Position = uTransform * vec4(position, aPosition.z, 1.0);
 }

@@ -336,7 +336,7 @@ pub struct GlyphRasterizer {
     //   a frame where it is used (although it seems unlikely).
     fonts_to_remove: Vec<FontKey>,
 
-    pathfinder_mesh_library: Arc<RwLock<MeshLibrary>>,
+    next_gpu_glyph_cache_key: GpuGlyphCacheKey,
 }
 
 impl GlyphRasterizer {
@@ -368,7 +368,7 @@ impl GlyphRasterizer {
             glyph_tx,
             workers,
             fonts_to_remove: Vec::new(),
-            pathfinder_mesh_library: Arc::new(RwLock::new(MeshLibrary::new())),
+            next_gpu_glyph_cache_key: GpuGlyphCacheKey(0),
         })
     }
 
@@ -502,7 +502,7 @@ impl GlyphRasterizer {
 
     fn request_glyphs_from_pathfinder(&mut self, glyphs: Vec<GlyphRequest>) {
         let mut font_context = self.font_contexts.lock_pathfinder_context();
-        let mut mesh_library = self.pathfinder_mesh_library.write().unwrap();
+        let mut mesh_library = MeshLibrary::new();
 
         let raster_jobs: Vec<_> = glyphs.into_iter().map(|glyph| {
             let pathfinder_font_instance = pathfinder_font_renderer::FontInstance {
@@ -525,12 +525,12 @@ impl GlyphRasterizer {
                                OK",
                             glyph.key.index,
                             glyph.key.subpixel_offset);
-                    let path_id = mesh_library.next_path_id();
-                    mesh_library.push_stencil_segments(path_id, outline.iter());
-                    mesh_library.push_stencil_normals(path_id, outline.iter());
+                    let mut mesh_library = MeshLibrary::new();
+                    mesh_library.push_stencil_segments(1, outline.iter());
+                    mesh_library.push_stencil_normals(1, outline.iter());
                     let glyph_size = TypedSize2D::from_untyped(&dimensions.size.to_i32());
                     println!("request_glyphs_from_pathfinder(): glyph size={:?}", glyph_size);
-                    GlyphRasterResult::Mesh(path_id, glyph_size)
+                    GlyphRasterResult::Mesh(mesh_library, glyph_size)
                 }
                 _ => {
                     eprintln!("request_glyphs_from_pathfinder(): Failed to get glyph outline!");
@@ -638,15 +638,14 @@ impl GlyphRasterizer {
                         format: glyph.format,
                     })
                 }
-                GlyphRasterResult::Mesh(path_id, dimensions) => {
+                GlyphRasterResult::Mesh(mesh_library, dimensions) => {
                     // TODO(pcwalton)
                     let render_task_cache_key = RenderTaskCacheKey {
                         size: dimensions,
-                        kind: RenderTaskCacheKeyKind::Glyph(GpuGlyphCacheKey {
-                            path_id: path_id,
-                        }),
+                        kind: RenderTaskCacheKeyKind::Glyph(self.next_gpu_glyph_cache_key),
                     };
-                    let mesh_library = self.pathfinder_mesh_library.clone();
+                    self.next_gpu_glyph_cache_key.0 += 1;
+                    let mut mesh_library = Some(mesh_library);
                     let texture_cache_handle =
                         render_task_cache.request_render_task(render_task_cache_key,
                                                               texture_cache,
@@ -654,7 +653,8 @@ impl GlyphRasterizer {
                                                               render_tasks,
                                                               |render_tasks| {
                             let location = RenderTaskLocation::Dynamic(None, dimensions);
-                            let glyph_render_task = RenderTask::new_glyph(location, path_id);
+                            let mesh_library = mesh_library.take().unwrap();
+                            let glyph_render_task = RenderTask::new_glyph(location, mesh_library);
                             let root_task_id = render_tasks.add(glyph_render_task);
                             // FIXME(pcwalton): Support non-alpha glyphs.
                             glyph_pass.add_render_task(root_task_id,
@@ -766,15 +766,13 @@ struct GlyphRasterJob {
 enum GlyphRasterResult {
     LoadFailed,
     Bitmap(RasterizedGlyph),
-    Mesh(u16, TypedSize2D<i32, DevicePixel>),
+    Mesh(MeshLibrary, TypedSize2D<i32, DevicePixel>),
 }
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
-pub struct GpuGlyphCacheKey {
-    pub path_id: u16,
-}
+pub struct GpuGlyphCacheKey(pub u32);
 
 #[test]
 fn rasterize_200_glyphs() {

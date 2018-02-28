@@ -33,7 +33,7 @@ use device::{ExternalTexture, FBOId, TextureSlot, VertexAttribute, VertexAttribu
 use device::{FileWatcherHandler, ShaderError, TextureFilter,
              VertexUsageHint, VAO, VBO, CustomVAO};
 use device::{ProgramCache, ReadPixelsFormat};
-use euclid::{rect, Transform3D};
+use euclid::{rect, Point2D, Transform3D};
 use frame_builder::FrameBuilderConfig;
 use gleam::gl;
 use glyph_rasterizer::GlyphFormat;
@@ -456,7 +456,7 @@ const DESC_CLIP: VertexDescriptor = VertexDescriptor {
     ],
 };
 
-const DESC_VECTOR: VertexDescriptor = VertexDescriptor {
+const DESC_VECTOR_STENCIL: VertexDescriptor = VertexDescriptor {
     vertex_attributes: &[
         VertexAttribute {
             name: "aPosition",
@@ -483,7 +483,12 @@ const DESC_VECTOR: VertexDescriptor = VertexDescriptor {
         VertexAttribute {
             name: "aPathID",
             count: 1,
-            kind: VertexAttributeKind::F32,
+            kind: VertexAttributeKind::U16,
+        },
+        VertexAttribute {
+            name: "aPad",
+            count: 1,
+            kind: VertexAttributeKind::U16,
         },
     ],
 };
@@ -1550,7 +1555,7 @@ fn create_prim_shader(
         VertexArrayKind::Primitive => DESC_PRIM_INSTANCES,
         VertexArrayKind::Blur => DESC_BLUR,
         VertexArrayKind::Clip => DESC_CLIP,
-        VertexArrayKind::Vector => DESC_VECTOR,
+        VertexArrayKind::Vector => DESC_VECTOR_STENCIL,
     };
 
     let program = device.create_program(name, &prefix, &vertex_descriptor);
@@ -2225,7 +2230,7 @@ impl Renderer {
 
         let blur_vao = device.create_vao_with_new_instances(&DESC_BLUR, &prim_vao);
         let clip_vao = device.create_vao_with_new_instances(&DESC_CLIP, &prim_vao);
-        let vector_vao = device.create_vao_with_new_instances(&DESC_VECTOR, &prim_vao);
+        let vector_vao = device.create_vao_with_new_instances(&DESC_VECTOR_STENCIL, &prim_vao);
 
         let texture_cache_upload_pbo = device.create_pbo();
 
@@ -3574,7 +3579,7 @@ impl Renderer {
         for glyph in glyphs {
             let rect = &glyph.target_rect;
             path_transform_texels.extend_from_slice(&[
-                rect.size.width as f32, 0.0, 0.0, rect.size.height as f32,
+                1.0, 0.0, 0.0, 1.0,
                 rect.origin.x as f32, rect.origin.y as f32, 0.0, 0.0,
             ]);
         }
@@ -3595,10 +3600,20 @@ impl Renderer {
         let path_transform_external_texture = path_transform_texture.to_external();
         let batch_textures =
             BatchTextures::color(SourceTexture::Custom(path_transform_external_texture));
-        self.draw_instanced_batch(&(0..(glyphs.len() as u16)).collect::<Vec<u16>>(),
-                                  VertexArrayKind::Vector,
-                                  &batch_textures,
-                                  stats);
+
+        let mut instance_data = vec![];
+        for (path_id, glyph) in glyphs.iter().enumerate() {
+            instance_data.extend(glyph.mesh_library.stencil_segments.iter().map(|segment| {
+                VectorStencilInstanceAttrs {
+                    from: segment.from,
+                    ctrl: segment.ctrl,
+                    to: segment.to,
+                    path_id: path_id as u16,
+                }
+            }));
+        }
+
+        self.draw_instanced_batch(&instance_data, VertexArrayKind::Vector, &batch_textures, stats);
 
         self.device.delete_texture(path_transform_texture);
     }
@@ -3801,7 +3816,6 @@ impl Renderer {
                         self.device.set_blend(true);
 
                         eprintln!("drawing text run: blend mode={:?}", batch.key.blend_mode);
-                        eprintln!("... instances: {:#?}", batch.instances);
 
                         match batch.key.blend_mode {
                             BlendMode::Alpha => panic!("Attempt to composite non-premultiplied text primitives."),
@@ -5420,4 +5434,13 @@ impl Renderer {
         self.external_image_handler = Some(Box::new(image_handler) as Box<_>);
         info!("done.");
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+struct VectorStencilInstanceAttrs {
+    from: Point2D<f32>,
+    ctrl: Point2D<f32>,
+    to: Point2D<f32>,
+    path_id: u16,
 }
