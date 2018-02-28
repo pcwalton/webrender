@@ -3078,7 +3078,6 @@ impl Renderer {
         );
 
         for update_list in self.pending_gpu_cache_updates.drain(..) {
-            eprintln!("updating GPU cache: {:#?}", update_list.blocks);
             assert!(update_list.height <= max_requested_height);
             if update_list.frame_id > self.gpu_cache_frame_id {
                 self.gpu_cache_frame_id = update_list.frame_id
@@ -3572,34 +3571,35 @@ impl Renderer {
         let _timer = self.gpu_profile.start_timer(GPU_TAG_GLYPH);
 
         // TODO(pcwalton): Cache this texture!
-        let mut path_transform_texture = self.device.create_texture(TextureTarget::Default,
-                                                                    ImageFormat::RGBAF32);
+        let mut path_info_texture = self.device.create_texture(TextureTarget::Default,
+                                                               ImageFormat::RGBAF32);
 
-        let mut path_transform_texels = Vec::with_capacity(glyphs.len() * 8);
+        let mut path_info_texels = Vec::with_capacity(glyphs.len() * 12);
         for glyph in glyphs {
             let rect = &glyph.target_rect;
-            path_transform_texels.extend_from_slice(&[
+            path_info_texels.extend_from_slice(&[
                 1.0, 0.0, 0.0, 1.0,
                 rect.origin.x as f32, rect.origin.y as f32, 0.0, 0.0,
+                rect.size.width as f32, rect.size.height as f32, 0.0, 0.0,
             ]);
         }
 
-        self.device.init_texture(&mut path_transform_texture,
-                                 2,
+        self.device.init_texture(&mut path_info_texture,
+                                 3,
                                  glyphs.len() as u32,
                                  TextureFilter::Nearest,
                                  None,
                                  1,
-                                 Some(&path_transform_texels));
+                                 Some(&path_info_texels));
 
         self.pf_vector_stencil.bind(&mut self.device,
                                     projection,
                                     0,
                                     &mut self.renderer_errors);
 
-        let path_transform_external_texture = path_transform_texture.to_external();
+        let path_info_external_texture = path_info_texture.to_external();
         let batch_textures =
-            BatchTextures::color(SourceTexture::Custom(path_transform_external_texture));
+            BatchTextures::color(SourceTexture::Custom(path_info_external_texture));
 
         let mut instance_data = vec![];
         for (path_id, glyph) in glyphs.iter().enumerate() {
@@ -3615,7 +3615,7 @@ impl Renderer {
 
         self.draw_instanced_batch(&instance_data, VertexArrayKind::Vector, &batch_textures, stats);
 
-        self.device.delete_texture(path_transform_texture);
+        self.device.delete_texture(path_info_texture);
     }
 
     fn draw_color_target(

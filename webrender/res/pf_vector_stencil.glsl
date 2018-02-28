@@ -12,11 +12,20 @@ in vec2 aTo;
 in int aPathID;
 
 void main(void) {
-    vec2 position = mix(aFrom, aTo, aPosition.xy);
-
     ivec2 pathAddress = ivec2(0.0, aPathID);
     mat2 transformLinear = mat2(TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(0, 0)));
     vec2 transformTranslation = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(1, 0)).xy;
+    float rectHeight = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(2, 0)).y;
+
+    vec2 position;
+    if (aPosition.x < 0.5)
+        position.x = floor(min(aFrom.x, aTo.x));
+    else
+        position.x = ceil(max(aFrom.x, aTo.x));
+    if (aPosition.y < 0.5)
+        position.y = floor(min(aFrom.y, aTo.y));
+    else
+        position.y = rectHeight;
 
     position = transformLinear * position + transformTranslation;
 
@@ -28,7 +37,7 @@ void main(void) {
 #ifdef WR_FRAGMENT_SHADER
 
 void main(void) {
-    oFragColor = vec4(0.5);
+    oFragColor = vec4(1.0);
 }
 
 #endif
