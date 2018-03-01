@@ -3625,8 +3625,8 @@ impl Renderer {
         for glyph in glyphs {
             let rect = &glyph.target_rect;
             path_info_texels.extend_from_slice(&[
-                1.0, 0.0, 0.0, 1.0,
-                rect.origin.x as f32, rect.origin.y as f32, 0.0, 0.0,
+                1.0, 0.0, 0.0, -1.0,
+                rect.origin.x as f32, rect.max_y() as f32, 0.0, 0.0,
                 rect.size.width as f32, rect.size.height as f32, 0.0, 0.0,
             ]);
         }
