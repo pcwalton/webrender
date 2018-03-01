@@ -11,6 +11,8 @@ in vec2 aCtrl;
 in vec2 aTo;
 in int aPathID;
 
+out float vWinding;
+
 void main(void) {
     ivec2 pathAddress = ivec2(0.0, aPathID);
     mat2 transformLinear = mat2(TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(0, 0)));
@@ -30,14 +32,17 @@ void main(void) {
     position = transformLinear * position + transformTranslation;
 
     gl_Position = uTransform * vec4(position, aPosition.z, 1.0);
+    vWinding = aFrom.x - aTo.x;
 }
 
 #endif
 
 #ifdef WR_FRAGMENT_SHADER
 
+in float vWinding;
+
 void main(void) {
-    oFragColor = vec4(1.0);
+    oFragColor = vec4(sign(vWinding));
 }
 
 #endif

@@ -89,7 +89,6 @@ void main(void) {
     // Transform the glyph rect back to local space.
     mat2 inv = inverse(transform);
     RectWithSize local_rect = transform_rect(glyph_rect, inv);
-    local_rect.size = vec2(64.0);
 
     // Select the corner of the glyph's local space rect that we are processing.
     vec2 local_pos = local_rect.p0 + local_rect.size * aPosition.xy;
@@ -107,8 +106,6 @@ void main(void) {
     // Compute the glyph rect in local space.
     RectWithSize glyph_rect = RectWithSize(scale * res.offset + text.offset + glyph.offset,
                                            scale * (res.uv_rect.zw - res.uv_rect.xy));
-    //glyph_rect.size = scale * abs(res.uv_rect.zw - res.uv_rect.xy);
-    //glyph_rect.size = abs(glyph_rect.size);
 
     // Select the corner of the glyph rect that we are processing.
     vec2 local_pos = glyph_rect.p0 + glyph_rect.size * aPosition.xy;

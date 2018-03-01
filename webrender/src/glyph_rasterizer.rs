@@ -502,7 +502,7 @@ impl GlyphRasterizer {
 
     fn request_glyphs_from_pathfinder(&mut self, glyphs: Vec<GlyphRequest>) {
         let mut font_context = self.font_contexts.lock_pathfinder_context();
-        let mut mesh_library = MeshLibrary::new();
+        let mesh_library = MeshLibrary::new();
 
         let raster_jobs: Vec<_> = glyphs.into_iter().map(|glyph| {
             let pathfinder_font_instance = pathfinder_font_renderer::FontInstance {
@@ -661,7 +661,7 @@ impl GlyphRasterizer {
                                                        dimensions,
                                                        RenderTargetKind::Alpha);
                             eprintln!("resolve_glyphs(): added task ID {:?}", root_task_id);
-                            (root_task_id, [0.0, 0.0, 1.0], false)
+                            (root_task_id, [0.0, -(dimensions.height as f32), 1.0], false)
                         });
                     eprintln!("resolve_glyphs(): requesting render task for mesh: size={:?}",
                               dimensions);
@@ -670,7 +670,7 @@ impl GlyphRasterizer {
                         texture_cache_handle: texture_cache_handle,
                         glyph_bytes: CachedGlyphData::Gpu,
                         size: TypedSize2D::new(dimensions.width as u32, dimensions.height as u32),
-                        offset: DevicePoint::zero(),
+                        offset: DevicePoint::new(0.0, -(dimensions.height as f32)),
                         scale: 1.0,
                         format: GlyphFormat::Alpha,
                     })

@@ -2036,9 +2036,11 @@ impl Device {
     }
     pub fn set_blend_mode_subpixel_pass0(&self) {
         self.gl.blend_func(gl::ZERO, gl::ONE_MINUS_SRC_COLOR);
+        self.gl.blend_equation(gl::FUNC_ADD);
     }
     pub fn set_blend_mode_subpixel_pass1(&self) {
         self.gl.blend_func(gl::ONE, gl::ONE);
+        self.gl.blend_equation(gl::FUNC_ADD);
     }
     pub fn set_blend_mode_subpixel_with_bg_color_pass0(&self) {
         self.gl.blend_func_separate(gl::ZERO, gl::ONE_MINUS_SRC_COLOR, gl::ZERO, gl::ONE);
@@ -2061,6 +2063,7 @@ impl Device {
     }
     pub fn set_blend_mode_subpixel_dual_source(&self) {
         self.gl.blend_func(gl::ONE, gl::ONE_MINUS_SRC1_COLOR);
+        self.gl.blend_equation(gl::FUNC_ADD);
     }
 
     pub fn supports_extension(&self, extension: &str) -> bool {
