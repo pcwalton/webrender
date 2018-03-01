@@ -7,7 +7,7 @@
 flat varying vec4 vColor;
 varying vec3 vUv;
 flat varying vec4 vUvBorder;
-flat varying vec2 vMaskSwizzle;
+flat varying vec3 vMaskSwizzle;
 
 #ifdef WR_FEATURE_GLYPH_TRANSFORM
 varying vec4 vUvClip;
@@ -132,30 +132,32 @@ void main(void) {
 
     switch (uMode) {
         case MODE_ALPHA:
+            vMaskSwizzle = vec3(1.0, 0.0, 0.0);
+            vColor = text.color;
+            break;
         case MODE_BITMAP:
-            vMaskSwizzle = vec2(1.0, 0.0);
-            //vMaskSwizzle = vec2(0.0, 1.0);
-            vColor = /*text.color*/vec4(1.0);
+            vMaskSwizzle = vec3(0.0, 1.0, 1.0);
+            vColor = text.color;
             break;
         case MODE_SUBPX_PASS1:
         case MODE_SUBPX_BG_PASS2:
         case MODE_SUBPX_DUAL_SOURCE:
-            vMaskSwizzle = vec2(1.0, 0.0);
+            vMaskSwizzle = vec3(1.0, 0.0, 1.0);
             vColor = text.color;
             break;
         case MODE_SUBPX_CONST_COLOR:
         case MODE_SUBPX_PASS0:
         case MODE_SUBPX_BG_PASS0:
         case MODE_COLOR_BITMAP:
-            vMaskSwizzle = vec2(1.0, 0.0);
+            vMaskSwizzle = vec3(1.0, 0.0, 1.0);
             vColor = vec4(text.color.a);
             break;
         case MODE_SUBPX_BG_PASS1:
-            vMaskSwizzle = vec2(-1.0, 1.0);
+            vMaskSwizzle = vec3(-1.0, 1.0, 1.0);
             vColor = vec4(text.color.a) * text.bg_color;
             break;
         default:
-            vMaskSwizzle = vec2(0.0);
+            vMaskSwizzle = vec3(0.0, 0.0, 1.0);
             vColor = vec4(1.0);
     }
 
@@ -173,6 +175,7 @@ void main(void) {
     vec3 tc = vec3(clamp(vUv.xy, vUvBorder.xy, vUvBorder.zw), vUv.z);
     vec4 mask = texture(sColor0, tc);
     mask.rgb = mask.rgb * vMaskSwizzle.x + mask.aaa * vMaskSwizzle.y;
+    mask.a = mix(mask.r, mask.a, vMaskSwizzle.z);
 
     float alpha = do_clip();
 #ifdef WR_FEATURE_GLYPH_TRANSFORM
