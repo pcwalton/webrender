@@ -470,17 +470,17 @@ const DESC_VECTOR_STENCIL: VertexDescriptor = VertexDescriptor {
     ],
     instance_attributes: &[
         VertexAttribute {
-            name: "aFrom",
+            name: "aFromPosition",
             count: 2,
             kind: VertexAttributeKind::F32,
         },
         VertexAttribute {
-            name: "aCtrl",
+            name: "aCtrlPosition",
             count: 2,
             kind: VertexAttributeKind::F32,
         },
         VertexAttribute {
-            name: "aTo",
+            name: "aToPosition",
             count: 2,
             kind: VertexAttributeKind::F32,
         },
@@ -3672,9 +3672,9 @@ impl Renderer {
         for (path_id, glyph) in glyphs.iter().enumerate() {
             instance_data.extend(glyph.mesh_library.stencil_segments.iter().map(|segment| {
                 VectorStencilInstanceAttrs {
-                    from: segment.from,
-                    ctrl: segment.ctrl,
-                    to: segment.to,
+                    from_position: segment.from,
+                    ctrl_position: segment.ctrl,
+                    to_position: segment.to,
                     path_id: path_id as u16,
                 }
             }));
@@ -5567,8 +5567,8 @@ impl Renderer {
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 struct VectorStencilInstanceAttrs {
-    from: Point2D<f32>,
-    ctrl: Point2D<f32>,
-    to: Point2D<f32>,
+    from_position: Point2D<f32>,
+    ctrl_position: Point2D<f32>,
+    to_position: Point2D<f32>,
     path_id: u16,
 }

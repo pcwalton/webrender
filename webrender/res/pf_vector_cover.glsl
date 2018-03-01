@@ -19,7 +19,7 @@ void main(void) {
 #ifdef WR_FRAGMENT_SHADER
 
 void main(void) {
-    oFragColor = TEXEL_FETCH(sColor0, ivec2(floor(gl_FragCoord.xy)), 0, ivec2(0)).rrrr;
+    oFragColor = abs(TEXEL_FETCH(sColor0, ivec2(floor(gl_FragCoord.xy)), 0, ivec2(0)).rrrr);
 }
 
 #endif
