@@ -3604,12 +3604,12 @@ impl Renderer {
 
     /// Renders glyphs using the vector graphics shaders (Pathfinder).
     fn stencil_glyphs(&mut self,
-                     glyphs: &[GlyphJob],
-                     projection: &Transform3D<f32>,
-                     target_size: &DeviceUintSize,
-                     render_tasks: &RenderTaskTree,
-                     stats: &mut RendererStats)
-                     -> Option<Texture> {
+                      glyphs: &[GlyphJob],
+                      projection: &Transform3D<f32>,
+                      target_size: &DeviceUintSize,
+                      render_tasks: &RenderTaskTree,
+                      stats: &mut RendererStats)
+                      -> Option<Texture> {
         if glyphs.is_empty() {
             return None
         }
@@ -3623,7 +3623,7 @@ impl Renderer {
 
         let mut path_info_texels = Vec::with_capacity(glyphs.len() * 12);
         for glyph in glyphs {
-            let rect = &glyph.target_rect;
+            let rect = glyph.target_rect.translate(&-glyph.origin.to_vector());
             path_info_texels.extend_from_slice(&[
                 1.0, 0.0, 0.0, -1.0,
                 rect.origin.x as f32, rect.max_y() as f32, 0.0, 0.0,

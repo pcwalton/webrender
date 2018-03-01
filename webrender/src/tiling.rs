@@ -10,6 +10,7 @@ use batch::{AlphaBatchBuilder, AlphaBatchContainer, ClipBatcher, resolve_image};
 use clip::{ClipStore};
 use clip_scroll_tree::{ClipScrollTree};
 use device::{FrameId, Texture};
+use euclid::TypedPoint2D;
 use gpu_cache::{GpuCache};
 use gpu_types::{BlurDirection, BlurInstance, BrushFlags, BrushInstance, ClipChainRectIndex};
 use gpu_types::{ClipScrollNodeData, ClipScrollNodeIndex};
@@ -25,6 +26,7 @@ use render_task::{BlurTask, ClearMode, RenderTaskLocation, RenderTaskTree};
 use resource_cache::ResourceCache;
 use std::{cmp, usize, f32, i32};
 use texture_allocator::GuillotineAllocator;
+use webrender_api::DevicePixel;
 
 const MIN_TARGET_SIZE: u32 = 2048;
 
@@ -270,6 +272,7 @@ pub struct BlitJob {
 pub struct GlyphJob {
     pub mesh_library: MeshLibrary,
     pub target_rect: DeviceIntRect,
+    pub origin: DeviceIntPoint,
 }
 
 /// A render target represents a number of rendering operations on a surface.
@@ -728,6 +731,7 @@ impl TextureCacheRenderTarget {
                 self.glyphs.push(GlyphJob {
                     mesh_library: task_info.mesh_library.clone(),
                     target_rect: task.get_target_rect().0,
+                    origin: task_info.origin,
                 });
             }
             RenderTaskKind::VerticalBlur(..) |

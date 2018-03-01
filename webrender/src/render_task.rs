@@ -8,6 +8,7 @@ use box_shadow::BoxShadowCacheKey;
 use clip::ClipWorkItem;
 use clip_scroll_tree::CoordinateSystemId;
 use device::TextureFilter;
+use euclid::TypedPoint2D;
 use glyph_rasterizer::GpuGlyphCacheKey;
 use gpu_cache::GpuCache;
 use gpu_types::PictureType;
@@ -22,6 +23,7 @@ use std::{cmp, ops, usize, f32, i32};
 use texture_cache::{TextureCache, TextureCacheHandle};
 use tiling::{RenderPass, RenderTargetIndex};
 use tiling::{RenderTargetKind};
+use webrender_api::DevicePixel;
 
 const FLOATS_PER_RENDER_TASK_INFO: usize = 12;
 pub const MAX_BLUR_STD_DEVIATION: f32 = 4.0;
@@ -191,6 +193,7 @@ impl BlurTask {
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct GlyphTask {
     pub mesh_library: MeshLibrary,
+    pub origin: DeviceIntPoint,
 }
 
 // Where the source data for a blit task can be found.
@@ -435,13 +438,15 @@ impl RenderTask {
     }
 
     pub fn new_glyph(location: RenderTaskLocation,
-                     mesh_library: MeshLibrary)
+                     mesh_library: MeshLibrary,
+                     origin: DeviceIntPoint)
                      -> Self {
         RenderTask {
             children: vec![],
             location: location,
             kind: RenderTaskKind::Glyph(GlyphTask {
                 mesh_library: mesh_library,
+                origin: origin,
             }),
             clear_mode: ClearMode::Transparent,
             saved_index: None,

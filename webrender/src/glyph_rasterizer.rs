@@ -11,7 +11,7 @@ use api::{GlyphDimensions, GlyphKey, SubpixelDirection};
 use api::{ImageData, ImageDescriptor, ImageFormat, LayerToWorldTransform};
 use app_units::Au;
 use device::TextureFilter;
-use euclid::TypedSize2D;
+use euclid::{TypedPoint2D, TypedSize2D};
 use glyph_cache::{CachedGlyphData, CachedGlyphInfo, GlyphCache};
 use gpu_cache::GpuCache;
 use internal_types::{FastHashSet, ResourceCacheError};
@@ -33,7 +33,7 @@ use texture_cache::{TextureCache, TextureCacheHandle};
 #[cfg(test)]
 use thread_profiler::register_thread_with_profiler;
 use tiling::{RenderPass, RenderTargetKind};
-use webrender_api::DevicePixel;
+use webrender_api::{DeviceIntPoint, DeviceIntSize, DevicePixel};
 
 type PathfinderFontContext = pathfinder_font_renderer::FontContext<FontKey>;
 
@@ -528,9 +528,14 @@ impl GlyphRasterizer {
                     let mut mesh_library = MeshLibrary::new();
                     mesh_library.push_stencil_segments(1, outline.iter());
                     mesh_library.push_stencil_normals(1, outline.iter());
+                    let glyph_origin = TypedPoint2D::new(dimensions.origin.x as i32,
+                                                         -dimensions.origin.y as i32);
                     let glyph_size = TypedSize2D::from_untyped(&dimensions.size.to_i32());
-                    println!("request_glyphs_from_pathfinder(): glyph size={:?}", glyph_size);
-                    GlyphRasterResult::Mesh(mesh_library, glyph_size)
+                    eprintln!("request_glyphs_from_pathfinder(): glyph origin={:?} \
+                               glyph size={:?}",
+                              glyph_origin,
+                              glyph_size);
+                    GlyphRasterResult::Mesh(mesh_library, glyph_origin, glyph_size)
                 }
                 _ => {
                     eprintln!("request_glyphs_from_pathfinder(): Failed to get glyph outline!");
@@ -638,7 +643,7 @@ impl GlyphRasterizer {
                         format: glyph.format,
                     })
                 }
-                GlyphRasterResult::Mesh(mesh_library, dimensions) => {
+                GlyphRasterResult::Mesh(mesh_library, origin, dimensions) => {
                     // TODO(pcwalton)
                     let render_task_cache_key = RenderTaskCacheKey {
                         size: dimensions,
@@ -654,7 +659,9 @@ impl GlyphRasterizer {
                                                               |render_tasks| {
                             let location = RenderTaskLocation::Dynamic(None, dimensions);
                             let mesh_library = mesh_library.take().unwrap();
-                            let glyph_render_task = RenderTask::new_glyph(location, mesh_library);
+                            let glyph_render_task = RenderTask::new_glyph(location,
+                                                                          mesh_library,
+                                                                          origin);
                             let root_task_id = render_tasks.add(glyph_render_task);
                             // FIXME(pcwalton): Support non-alpha glyphs.
                             glyph_pass.add_render_task(root_task_id,
@@ -766,7 +773,7 @@ struct GlyphRasterJob {
 enum GlyphRasterResult {
     LoadFailed,
     Bitmap(RasterizedGlyph),
-    Mesh(MeshLibrary, TypedSize2D<i32, DevicePixel>),
+    Mesh(MeshLibrary, DeviceIntPoint, DeviceIntSize),
 }
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
