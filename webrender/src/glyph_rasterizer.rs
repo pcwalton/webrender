@@ -668,7 +668,9 @@ impl GlyphRasterizer {
                                                        dimensions,
                                                        RenderTargetKind::Alpha);
                             eprintln!("resolve_glyphs(): added task ID {:?}", root_task_id);
-                            (root_task_id, [0.0, -(dimensions.height as f32), 1.0], false)
+                            (root_task_id,
+                             [origin.x as f32, (origin.y - dimensions.height) as f32, 1.0],
+                             false)
                         });
                     eprintln!("resolve_glyphs(): requesting render task for mesh: size={:?}",
                               dimensions);
@@ -677,7 +679,7 @@ impl GlyphRasterizer {
                         texture_cache_handle: texture_cache_handle,
                         glyph_bytes: CachedGlyphData::Gpu,
                         size: TypedSize2D::new(dimensions.width as u32, dimensions.height as u32),
-                        offset: DevicePoint::new(0.0, -(dimensions.height as f32)),
+                        offset: DevicePoint::new(origin.x as f32, -origin.y as f32),
                         scale: 1.0,
                         format: GlyphFormat::Alpha,
                     })
@@ -736,13 +738,10 @@ impl AddFont for PathfinderFontContext {
     fn add_font(&mut self, font_key: &FontKey, template: &FontTemplate) {
         match template {
             &FontTemplate::Raw(ref bytes, index) => {
-                if self.add_font_from_memory(&font_key, bytes.clone(), index).is_err() {
-                    eprintln!("PathfinderFontContext::add_font(): couldn't add font from memory!");
-                }
-                eprintln!("PathfinderFontContext::add_font(): added font from memory OK");
+                drop(self.add_font_from_memory(&font_key, bytes.clone(), index));
             }
             &FontTemplate::Native(ref native_font_handle) => {
-                self.add_native_font(&font_key, (*native_font_handle).clone().0);
+                drop(self.add_native_font(&font_key, (*native_font_handle).clone().0));
             }
         }
     }
