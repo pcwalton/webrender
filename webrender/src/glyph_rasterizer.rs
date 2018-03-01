@@ -741,8 +741,8 @@ impl AddFont for PathfinderFontContext {
                 }
                 eprintln!("PathfinderFontContext::add_font(): added font from memory OK");
             }
-            &FontTemplate::Native(_) => {
-                eprintln!("PathfinderFontContext::add_font(): couldn't add native font!");
+            &FontTemplate::Native(ref native_font_handle) => {
+                self.add_native_font(&font_key, (*native_font_handle).clone().0);
             }
         }
     }
