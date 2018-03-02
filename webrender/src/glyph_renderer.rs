@@ -9,12 +9,13 @@ use batch::BatchTextures;
 use debug_colors;
 use device::{Device, Texture, TextureFilter, VAO, VertexAttribute};
 use device::{VertexAttributeKind, VertexDescriptor};
-use euclid::{Point2D, Transform3D};
+use euclid::{Point2D, Size2D, Transform3D};
 use internal_types::{RenderTargetInfo, SourceTexture};
 use profiler::GpuProfileTag;
 use render_task::RenderTaskTree;
 use renderer::{ImageBufferKind, LazilyCompiledShader, Renderer, RendererError};
 use renderer::{RendererStats, ShaderKind, VertexArrayKind};
+use std::f32;
 use tiling::GlyphJob;
 
 const GPU_TAG_GLYPH_STENCIL: GpuProfileTag = GpuProfileTag {
@@ -254,4 +255,37 @@ struct VectorStencilInstanceAttrs {
     ctrl_position: Point2D<f32>,
     to_position: Point2D<f32>,
     path_id: u16,
+}
+
+struct ShelfBinPacker {
+    next: Point2D<f32>,
+    max_size: Size2D<f32>,
+    shelf_height: f32,
+}
+
+impl ShelfBinPacker {
+    fn new(max_size: &Size2D<f32>) -> ShelfBinPacker {
+        ShelfBinPacker {
+            next: Point2D::zero(),
+            max_size: *max_size,
+            shelf_height: 0.0,
+        }
+    }
+
+    // NB: If this returns `None`, you must throw this bin packer away.
+    fn add(&mut self, size: &Size2D<f32>) -> Result<Point2D<f32>, ()> {
+        let mut lower_right = Point2D::new(self.next.x + size.width, self.next.y + size.height);
+        if lower_right.x > self.max_size.width {
+            self.next = Point2D::new(0.0, self.next.y + self.shelf_height);
+            self.shelf_height = 0.0;
+            lower_right = Point2D::new(size.width, self.next.y + size.height);
+        }
+        if lower_right.x > self.max_size.width || lower_right.y > self.max_size.height {
+            return Err(())
+        }
+        let origin = self.next;
+        self.shelf_height = f32::max(self.shelf_height, size.height);
+        self.next.x += size.width;
+        Ok(origin)
+    }
 }
