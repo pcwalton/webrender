@@ -194,6 +194,7 @@ impl BlurTask {
 pub struct GlyphTask {
     pub mesh_library: MeshLibrary,
     pub origin: DeviceIntPoint,
+    pub subpixel_offset: TypedPoint2D<f32, DevicePixel>,
 }
 
 // Where the source data for a blit task can be found.
@@ -439,14 +440,16 @@ impl RenderTask {
 
     pub fn new_glyph(location: RenderTaskLocation,
                      mesh_library: MeshLibrary,
-                     origin: DeviceIntPoint)
+                     origin: &DeviceIntPoint,
+                     subpixel_offset: &TypedPoint2D<f32, DevicePixel>)
                      -> Self {
         RenderTask {
             children: vec![],
             location: location,
             kind: RenderTaskKind::Glyph(GlyphTask {
                 mesh_library: mesh_library,
-                origin: origin,
+                origin: *origin,
+                subpixel_offset: *subpixel_offset,
             }),
             clear_mode: ClearMode::Transparent,
             saved_index: None,

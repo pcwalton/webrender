@@ -18,12 +18,14 @@ void main(void) {
     ivec2 pathAddress = ivec2(0.0, aPathID);
     mat2 transformLinear = mat2(TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(0, 0)));
     vec2 transformTranslation = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(1, 0)).xy;
-    float rectHeight = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(2, 0)).y;
+
+    float rectHeight = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(2, 0)).y +
+        transformTranslation.y;
 
     // Perform the linear component of the transform (everything but translation).
-    vec2 fromPosition = transformLinear * aFromPosition;
-    vec2 ctrlPosition = transformLinear * aCtrlPosition;
-    vec2 toPosition = transformLinear * aToPosition;
+    vec2 fromPosition = transformLinear * aFromPosition + transformTranslation;
+    vec2 ctrlPosition = transformLinear * aCtrlPosition + transformTranslation;
+    vec2 toPosition = transformLinear * aToPosition + transformTranslation;
 
     // Compute edge vectors.
     vec2 v02 = toPosition - fromPosition;
@@ -62,8 +64,6 @@ void main(void) {
 
     // Compute X distances.
     vec3 xDist = position.x - vec3(fromPosition.x, ctrlPosition.x, toPosition.x);
-
-    position += transformTranslation;
 
     gl_Position = uTransform * vec4(position, aPosition.z, 1.0);
     vUV = uv;

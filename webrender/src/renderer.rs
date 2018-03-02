@@ -3623,11 +3623,13 @@ impl Renderer {
 
         let mut path_info_texels = Vec::with_capacity(glyphs.len() * 12);
         for glyph in glyphs {
-            let rect = glyph.target_rect.translate(&-glyph.origin.to_vector());
+            let rect = glyph.target_rect.to_f32()
+                                        .translate(&-glyph.origin.to_f32().to_vector())
+                                        .translate(&glyph.subpixel_offset.to_vector());
             path_info_texels.extend_from_slice(&[
                 1.0, 0.0, 0.0, -1.0,
-                rect.origin.x as f32, rect.max_y() as f32, 0.0, 0.0,
-                rect.size.width as f32, rect.size.height as f32, 0.0, 0.0,
+                rect.origin.x, rect.max_y(), 0.0, 0.0,
+                rect.size.width, rect.size.height, 0.0, 0.0,
             ]);
         }
 

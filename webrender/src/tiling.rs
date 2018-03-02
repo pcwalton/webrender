@@ -273,6 +273,7 @@ pub struct GlyphJob {
     pub mesh_library: MeshLibrary,
     pub target_rect: DeviceIntRect,
     pub origin: DeviceIntPoint,
+    pub subpixel_offset: TypedPoint2D<f32, DevicePixel>,
 }
 
 /// A render target represents a number of rendering operations on a surface.
@@ -732,6 +733,7 @@ impl TextureCacheRenderTarget {
                     mesh_library: task_info.mesh_library.clone(),
                     target_rect: task.get_target_rect().0,
                     origin: task_info.origin,
+                    subpixel_offset: task_info.subpixel_offset,
                 });
             }
             RenderTaskKind::VerticalBlur(..) |
