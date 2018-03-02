@@ -75,6 +75,7 @@ mod gamma_lut;
 mod geometry;
 mod glyph_cache;
 mod glyph_rasterizer;
+mod glyph_renderer;
 mod gpu_cache;
 mod gpu_types;
 mod hit_test;
