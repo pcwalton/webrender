@@ -854,6 +854,19 @@ impl Device {
         self.bind_texture_impl(sampler.into(), texture.id, get_gl_target(texture.target));
     }
 
+    /// NB: You must call this before deleting a texture that might be bound, in order to
+    /// invalidate the `bound_texture` caches.
+    pub fn unbind_texture(&mut self, texture: &Texture) {
+        if self.bound_textures[DEFAULT_TEXTURE.0] == 0 {
+            return
+        }
+
+        self.bound_textures[DEFAULT_TEXTURE.0] = 0;
+        self.gl.active_texture(gl::TEXTURE0 + DEFAULT_TEXTURE.0 as gl::GLuint);
+        self.gl.bind_texture(get_gl_target(texture.target), 0);
+        self.gl.active_texture(gl::TEXTURE0);
+    }
+
     pub fn bind_external_texture<S>(&mut self, sampler: S, external_texture: &ExternalTexture)
     where
         S: Into<TextureSlot>,
@@ -1299,6 +1312,13 @@ impl Device {
     pub fn delete_texture(&mut self, mut texture: Texture) {
         self.free_texture_storage(&mut texture);
         self.gl.delete_textures(&[texture.id]);
+
+        for bound_texture in &mut self.bound_textures {
+            if *bound_texture == texture.id {
+                *bound_texture = 0
+            }
+        }
+
         texture.id = 0;
     }
 
@@ -2068,6 +2088,13 @@ impl Device {
 
     pub fn supports_extension(&self, extension: &str) -> bool {
         self.extensions.iter().any(|s| s == extension)
+    }
+
+    pub fn check_framebuffer(&self) {
+        let status = self.gl.check_frame_buffer_status(gl::DRAW_FRAMEBUFFER);
+        if status != gl::FRAMEBUFFER_COMPLETE {
+            eprintln!("*** FRAMEBUFFER ERROR: 0x{:x}", status);
+        }
     }
 }
 

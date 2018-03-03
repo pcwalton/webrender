@@ -4184,11 +4184,11 @@ impl Renderer {
         self.device.set_blend(false);
 
         // Handle any Pathfinder glyphs.
-        let stencil_texture = self.stencil_glyphs(&target.glyphs,
-                                                  &projection,
-                                                  &target_size,
-                                                  render_tasks,
-                                                  stats);
+        let stencil_page = self.stencil_glyphs(&target.glyphs,
+                                               &projection,
+                                               &target_size,
+                                               render_tasks,
+                                               stats);
 
         {
             let texture = self.texture_resolver
@@ -4223,8 +4223,8 @@ impl Renderer {
         }
 
         // Blit any Pathfinder glyphs to the cache texture.
-        if let Some(stencil_texture) = stencil_texture {
-            self.cover_glyphs(stencil_texture, &target.glyphs, &projection, render_tasks, stats);
+        if let Some(stencil_page) = stencil_page {
+            self.cover_glyphs(stencil_page, &projection, render_tasks, stats);
         }
     }
 

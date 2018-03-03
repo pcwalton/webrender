@@ -10,6 +10,7 @@ in vec2 aFromPosition;
 in vec2 aCtrlPosition;
 in vec2 aToPosition;
 in int aPathID;
+in int aPad;
 
 out vec3 vUV;
 out vec3 vXDist;

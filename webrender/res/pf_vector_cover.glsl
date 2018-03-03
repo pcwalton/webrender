@@ -6,20 +6,30 @@
 
 #ifdef WR_VERTEX_SHADER
 
-in ivec4 aBounds;
+in ivec4 aTargetRect;
+in ivec2 aStencilOrigin;
+
+out vec2 vStencilUV;
 
 void main(void) {
-    vec4 bounds = vec4(aBounds);
-    vec2 position = bounds.xy + mix(vec2(0.0), bounds.zw, aPosition.xy);
-    gl_Position = uTransform * vec4(position, aPosition.z, 1.0);
+    vec4 targetRect = vec4(aTargetRect);
+    vec2 stencilOrigin = vec2(aStencilOrigin);
+
+    vec2 offset = mix(vec2(0.0), targetRect.zw, aPosition.xy);
+    vec2 targetPosition = targetRect.xy + offset, stencilPosition = stencilOrigin + offset;
+
+    gl_Position = uTransform * vec4(targetPosition, aPosition.z, 1.0);
+    vStencilUV = stencilPosition;
 }
 
 #endif
 
 #ifdef WR_FRAGMENT_SHADER
 
+in vec2 vStencilUV;
+
 void main(void) {
-    oFragColor = abs(TEXEL_FETCH(sColor0, ivec2(floor(gl_FragCoord.xy)), 0, ivec2(0)).rrrr);
+    oFragColor = abs(TEXEL_FETCH(sColor0, ivec2(vStencilUV), 0, ivec2(0)).rrrr);
 }
 
 #endif
