@@ -221,7 +221,7 @@ impl Renderer {
             BatchTextures::color(SourceTexture::Custom(path_info_external_texture));
 
         self.device.bind_draw_target(Some((&current_page.texture, 0)), Some(*target_size));
-        //self.device.clear_target(Some([0.0, 0.0, 0.0, 0.0]), None, None);
+        self.device.clear_target(Some([0.0, 0.0, 0.0, 0.0]), None, None);
 
         self.device.set_blend(true);
         self.device.set_blend_mode_subpixel_pass1();
@@ -245,9 +245,6 @@ impl Renderer {
                                   stats);
 
         self.device.delete_texture(path_info_texture);
-
-        // Very important!
-        self.device.unbind_texture(&current_page.texture);
 
         //self.device.delete_texture(stencil_texture);
 

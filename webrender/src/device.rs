@@ -854,19 +854,6 @@ impl Device {
         self.bind_texture_impl(sampler.into(), texture.id, get_gl_target(texture.target));
     }
 
-    /// NB: You must call this before deleting a texture that might be bound, in order to
-    /// invalidate the `bound_texture` caches.
-    pub fn unbind_texture(&mut self, texture: &Texture) {
-        if self.bound_textures[DEFAULT_TEXTURE.0] == 0 {
-            return
-        }
-
-        self.bound_textures[DEFAULT_TEXTURE.0] = 0;
-        self.gl.active_texture(gl::TEXTURE0 + DEFAULT_TEXTURE.0 as gl::GLuint);
-        self.gl.bind_texture(get_gl_target(texture.target), 0);
-        self.gl.active_texture(gl::TEXTURE0);
-    }
-
     pub fn bind_external_texture<S>(&mut self, sampler: S, external_texture: &ExternalTexture)
     where
         S: Into<TextureSlot>,
