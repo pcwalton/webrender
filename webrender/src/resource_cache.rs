@@ -801,7 +801,8 @@ impl ResourceCache {
         &mut self,
         gpu_cache: &mut GpuCache,
         render_tasks: &mut RenderTaskTree,
-        glyph_pass: &mut RenderPass,
+        alpha_glyph_pass: &mut RenderPass,
+        color_glyph_pass: &mut RenderPass,
         texture_cache_profile: &mut TextureCacheProfileCounters,
     ) {
         profile_scope!("block_until_all_resources_added");
@@ -815,7 +816,8 @@ impl ResourceCache {
             gpu_cache,
             &mut self.cached_render_tasks,
             render_tasks,
-            glyph_pass,
+            alpha_glyph_pass,
+            color_glyph_pass,
             texture_cache_profile,
         );
 

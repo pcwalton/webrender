@@ -546,6 +546,7 @@ impl GlyphRasterizer {
                         origin: glyph_origin,
                         dimensions: glyph_size,
                         subpixel_offset: TypedPoint2D::new(glyph_subpixel_offset as f32, 0.0),
+                        render_mode: glyph.font.render_mode,
                     })
                 }
                 _ => {
@@ -587,7 +588,8 @@ impl GlyphRasterizer {
         gpu_cache: &mut GpuCache,
         render_task_cache: &mut RenderTaskCache,
         render_tasks: &mut RenderTaskTree,
-        glyph_pass: &mut RenderPass,
+        alpha_glyph_pass: &mut RenderPass,
+        color_glyph_pass: &mut RenderPass,
         _texture_cache_profile: &mut TextureCacheProfileCounters,
     ) {
         let mut rasterized_glyphs = Vec::with_capacity(self.pending_glyphs.len());
@@ -667,6 +669,7 @@ impl GlyphRasterizer {
                         dimensions,
                         origin,
                         subpixel_offset,
+                        render_mode,
                         ..
                     } = mesh;
 
@@ -681,12 +684,21 @@ impl GlyphRasterizer {
                             let glyph_render_task = RenderTask::new_glyph(location,
                                                                           mesh_library,
                                                                           &origin,
-                                                                          &subpixel_offset);
+                                                                          &subpixel_offset,
+                                                                          render_mode);
                             let root_task_id = render_tasks.add(glyph_render_task);
-                            // FIXME(pcwalton): Support non-alpha glyphs.
-                            glyph_pass.add_render_task(root_task_id,
-                                                       dimensions,
-                                                       RenderTargetKind::Alpha);
+                            let target_kind = match render_mode {
+                                FontRenderMode::Mono | FontRenderMode::Alpha => {
+                                    alpha_glyph_pass.add_render_task(root_task_id,
+                                                                     dimensions,
+                                                                     RenderTargetKind::Alpha);
+                                }
+                                FontRenderMode::Subpixel => {
+                                    color_glyph_pass.add_render_task(root_task_id,
+                                                                     dimensions,
+                                                                     RenderTargetKind::Color);
+                                }
+                            };
                             eprintln!("resolve_glyphs(): added task ID {:?}", root_task_id);
                             (root_task_id, [
                                 origin.x as f32,
@@ -696,7 +708,10 @@ impl GlyphRasterizer {
                         });
                     eprintln!("resolve_glyphs(): requesting render task for mesh: size={:?}",
                               dimensions);
-                    // FIXME(pcwalton): Choose the right glyph format.
+                    let glyph_format = match render_mode {
+                        FontRenderMode::Mono | FontRenderMode::Alpha => GlyphFormat::Alpha,
+                        FontRenderMode::Subpixel => GlyphFormat::Subpixel,
+                    };
                     Some(CachedGlyphInfo {
                         texture_cache_handle: texture_cache_handle,
                         glyph_bytes: CachedGlyphData::Gpu,
@@ -704,7 +719,7 @@ impl GlyphRasterizer {
                                                dimensions.height as u32),
                         offset: DevicePoint::new(origin.x as f32, -origin.y as f32),
                         scale: 1.0,
-                        format: GlyphFormat::Alpha,
+                        format: glyph_format,
                     })
                 }
             };
@@ -803,6 +818,7 @@ struct Mesh {
     origin: DeviceIntPoint,
     subpixel_offset: TypedPoint2D<f32, DevicePixel>,
     dimensions: DeviceIntSize,
+    render_mode: FontRenderMode,
 }
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]

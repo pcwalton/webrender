@@ -4,7 +4,7 @@
 
 use api::{ClipId, ColorF, DeviceIntPoint, DeviceIntRect, DeviceIntSize};
 use api::{DevicePixelScale, DeviceUintPoint, DeviceUintRect, DeviceUintSize};
-use api::{DocumentLayer, FilterOp, ImageFormat};
+use api::{DocumentLayer, FilterOp, FontRenderMode, ImageFormat};
 use api::{LayerRect, MixBlendMode, PipelineId};
 use batch::{AlphaBatchBuilder, AlphaBatchContainer, ClipBatcher, resolve_image};
 use clip::{ClipStore};
@@ -274,6 +274,7 @@ pub struct GlyphJob {
     pub target_rect: DeviceIntRect,
     pub origin: DeviceIntPoint,
     pub subpixel_offset: TypedPoint2D<f32, DevicePixel>,
+    pub render_mode: FontRenderMode,
 }
 
 /// A render target represents a number of rendering operations on a surface.
@@ -734,6 +735,7 @@ impl TextureCacheRenderTarget {
                     target_rect: task.get_target_rect().0,
                     origin: task_info.origin,
                     subpixel_offset: task_info.subpixel_offset,
+                    render_mode: task_info.render_mode,
                 });
             }
             RenderTaskKind::VerticalBlur(..) |

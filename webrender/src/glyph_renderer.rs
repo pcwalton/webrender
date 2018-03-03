@@ -4,7 +4,7 @@
 
 //! GPU glyph rasterization using Pathfinder.
 
-use api::{DeviceIntPoint, DeviceIntRect, DeviceIntSize, DeviceUintSize};
+use api::{DeviceIntPoint, DeviceIntRect, DeviceIntSize, DeviceUintSize, FontRenderMode};
 use api::{ImageFormat, TextureTarget};
 use batch::BatchTextures;
 use debug_colors;
@@ -83,6 +83,16 @@ pub const DESC_VECTOR_COVER: VertexDescriptor = VertexDescriptor {
             name: "aStencilOrigin",
             count: 2,
             kind: VertexAttributeKind::I32,
+        },
+        VertexAttribute {
+            name: "aSubpixel",
+            count: 1,
+            kind: VertexAttributeKind::U16,
+        },
+        VertexAttribute {
+            name: "aPad",
+            count: 1,
+            kind: VertexAttributeKind::U16,
         },
     ],
 };
@@ -168,7 +178,10 @@ impl Renderer {
         });
         for &glyph_index in &glyph_indices {
             let glyph = &glyphs[glyph_index];
-            match packer.add(&glyph.target_rect.size) {
+            let x_scale = x_scale_for_render_mode(glyph.render_mode);
+            let stencil_size = DeviceIntSize::new(glyph.target_rect.size.width * x_scale,
+                                                  glyph.target_rect.size.height);
+            match packer.add(&stencil_size) {
                 Err(_) => {
                     eprintln!("*** failed to pack glyph!");
                     return None
@@ -178,6 +191,7 @@ impl Renderer {
                     current_page.glyphs.push(VectorCoverInstanceAttrs {
                         target_rect: glyph.target_rect,
                         stencil_origin: origin,
+                        subpixel: (glyph.render_mode == FontRenderMode::Subpixel) as u16,
                     })
                 }
             }
@@ -197,7 +211,7 @@ impl Renderer {
                                       .translate(&-glyph.origin.to_f32().to_vector())
                                       .translate(&glyph.subpixel_offset.to_vector());
             path_info_texels.extend_from_slice(&[
-                1.0, 0.0, 0.0, -1.0,
+                x_scale_for_render_mode(glyph.render_mode) as f32, 0.0, 0.0, -1.0,
                 rect.origin.x, rect.max_y(), 0.0, 0.0,
                 rect.size.width, rect.size.height, 0.0, 0.0,
             ]);
@@ -302,6 +316,7 @@ pub struct StenciledGlyphPage {
 struct VectorCoverInstanceAttrs {
     target_rect: DeviceIntRect,
     stencil_origin: DeviceIntPoint,
+    subpixel: u16,
 }
 
 impl VectorCoverInstanceAttrs {
@@ -341,5 +356,12 @@ impl ShelfBinPacker {
         self.shelf_height = cmp::max(self.shelf_height, size.height);
         self.next.x += size.width;
         Ok(origin)
+    }
+}
+
+fn x_scale_for_render_mode(render_mode: FontRenderMode) -> i32 {
+    match render_mode {
+        FontRenderMode::Subpixel => 3,
+        FontRenderMode::Mono | FontRenderMode::Alpha => 1,
     }
 }

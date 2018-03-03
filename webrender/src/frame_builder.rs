@@ -1873,12 +1873,16 @@ impl FrameBuilder {
         );
 
         let screen_size = self.screen_rect.size.to_i32();
-        let mut passes = vec![RenderPass::new_off_screen(screen_size)];
+        let mut alpha_glyph_pass = RenderPass::new_off_screen(screen_size);
+        let mut color_glyph_pass = RenderPass::new_off_screen(screen_size);
 
         resource_cache.block_until_all_resources_added(gpu_cache,
                                                        &mut render_tasks,
-                                                       &mut passes[0],
+                                                       &mut alpha_glyph_pass,
+                                                       &mut color_glyph_pass,
                                                        texture_cache_profile);
+
+        let mut passes = vec![alpha_glyph_pass, color_glyph_pass];
 
         if let Some(main_render_task_id) = main_render_task_id {
             let mut required_pass_count = 0;
@@ -1895,7 +1899,7 @@ impl FrameBuilder {
             render_tasks.assign_to_passes(
                 main_render_task_id,
                 required_pass_count - 1,
-                &mut passes[1..],
+                &mut passes[2..],
             );
         }
 

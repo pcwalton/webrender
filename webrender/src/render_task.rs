@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{DeviceIntPoint, DeviceIntRect, DeviceIntSize, ImageDescriptor, ImageFormat};
-use api::PremultipliedColorF;
+use api::{DeviceIntPoint, DeviceIntRect, DeviceIntSize, FontRenderMode, ImageDescriptor};
+use api::{ImageFormat, PremultipliedColorF};
 use box_shadow::BoxShadowCacheKey;
 use clip::ClipWorkItem;
 use clip_scroll_tree::CoordinateSystemId;
@@ -195,6 +195,7 @@ pub struct GlyphTask {
     pub mesh_library: MeshLibrary,
     pub origin: DeviceIntPoint,
     pub subpixel_offset: TypedPoint2D<f32, DevicePixel>,
+    pub render_mode: FontRenderMode,
 }
 
 // Where the source data for a blit task can be found.
@@ -441,7 +442,8 @@ impl RenderTask {
     pub fn new_glyph(location: RenderTaskLocation,
                      mesh_library: MeshLibrary,
                      origin: &DeviceIntPoint,
-                     subpixel_offset: &TypedPoint2D<f32, DevicePixel>)
+                     subpixel_offset: &TypedPoint2D<f32, DevicePixel>,
+                     render_mode: FontRenderMode)
                      -> Self {
         RenderTask {
             children: vec![],
@@ -450,6 +452,7 @@ impl RenderTask {
                 mesh_library: mesh_library,
                 origin: *origin,
                 subpixel_offset: *subpixel_offset,
+                render_mode: render_mode,
             }),
             clear_mode: ClearMode::Transparent,
             saved_index: None,
