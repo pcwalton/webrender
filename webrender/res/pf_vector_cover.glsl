@@ -32,19 +32,46 @@ void main(void) {
 
 #ifdef WR_FRAGMENT_SHADER
 
+#define LCD_FILTER_FACTOR_0     (86.0 / 255.0)
+#define LCD_FILTER_FACTOR_1     (77.0 / 255.0)
+#define LCD_FILTER_FACTOR_2     (8.0  / 255.0)
+
 in vec2 vStencilUV;
 flat in int vSubpixel;
 
+/// Applies a slight horizontal blur to reduce color fringing on LCD screens
+/// when performing subpixel AA.
+///
+/// The algorithm should be identical to that of FreeType:
+/// https://www.freetype.org/freetype2/docs/reference/ft2-lcd_filtering.html
+float lcdFilter(float shadeL2, float shadeL1, float shade0, float shadeR1, float shadeR2) {
+    return LCD_FILTER_FACTOR_2 * shadeL2 +
+        LCD_FILTER_FACTOR_1 * shadeL1 +
+        LCD_FILTER_FACTOR_0 * shade0 +
+        LCD_FILTER_FACTOR_1 * shadeR1 +
+        LCD_FILTER_FACTOR_2 * shadeR2;
+}
+
 void main(void) {
     ivec2 stencilUV = ivec2(vStencilUV);
+    float shade0 = abs(TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(0, 0)).r);
+
     if (vSubpixel == 0) {
-        oFragColor = abs(TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(0)).rrrr);
-    } else {
-        oFragColor = abs(vec4(TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(0, 0)).r,
-                              TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(1, 0)).r,
-                              TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(2, 0)).r,
-                              1.0));
+        oFragColor = vec4(shade0);
+        return;
     }
+
+    vec3 shadeL = abs(vec3(TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(-1, 0)).r,
+                           TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(-2, 0)).r,
+                           TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(-3, 0)).r));
+    vec3 shadeR = abs(vec3(TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(1, 0)).r,
+                           TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(2, 0)).r,
+                           TEXEL_FETCH(sColor0, stencilUV, 0, ivec2(3, 0)).r));
+
+    oFragColor = vec4(lcdFilter(shadeL.z, shadeL.y, shadeL.x, shade0,   shadeR.x),
+                      lcdFilter(shadeL.y, shadeL.x, shade0,   shadeR.x, shadeR.y),
+                      lcdFilter(shadeL.x, shade0,   shadeR.x, shadeR.y, shadeR.z),
+                      1.0);
 }
 
 #endif
