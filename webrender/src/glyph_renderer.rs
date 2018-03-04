@@ -19,6 +19,8 @@ use renderer::{RendererStats, ShaderKind, VertexArrayKind};
 use std::cmp;
 use tiling::GlyphJob;
 
+const HORIZONTAL_BIN_PADDING: i32 = 3;
+
 const GPU_TAG_GLYPH_STENCIL: GpuProfileTag = GpuProfileTag {
     label: "Glyph Stencil",
     color: debug_colors::STEELBLUE,
@@ -363,7 +365,7 @@ struct ShelfBinPacker {
 impl ShelfBinPacker {
     fn new(max_size: &DeviceIntSize) -> ShelfBinPacker {
         ShelfBinPacker {
-            next: DeviceIntPoint::zero(),
+            next: DeviceIntPoint::new(HORIZONTAL_BIN_PADDING, 0),
             max_size: *max_size,
             shelf_height: 0,
         }
@@ -371,19 +373,21 @@ impl ShelfBinPacker {
 
     // NB: If this returns `None`, you must throw this bin packer away.
     fn add(&mut self, size: &DeviceIntSize) -> Result<DeviceIntPoint, ()> {
-        let mut lower_right = DeviceIntPoint::new(self.next.x + size.width,
-                                                  self.next.y + size.height);
+        let mut lower_right =
+            DeviceIntPoint::new(self.next.x + size.width + HORIZONTAL_BIN_PADDING,
+                                self.next.y + size.height);
         if lower_right.x > self.max_size.width {
             self.next = DeviceIntPoint::new(0, self.next.y + self.shelf_height);
             self.shelf_height = 0;
-            lower_right = DeviceIntPoint::new(size.width, self.next.y + size.height);
+            lower_right = DeviceIntPoint::new(size.width + HORIZONTAL_BIN_PADDING,
+                                              self.next.y + size.height);
         }
         if lower_right.x > self.max_size.width || lower_right.y > self.max_size.height {
             return Err(())
         }
         let origin = self.next;
         self.shelf_height = cmp::max(self.shelf_height, size.height);
-        self.next.x += size.width;
+        self.next.x += size.width + HORIZONTAL_BIN_PADDING * 2;
         Ok(origin)
     }
 }
