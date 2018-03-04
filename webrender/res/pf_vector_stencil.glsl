@@ -27,15 +27,15 @@ void main(void) {
     float rectHeight = miscInfo.x + transformTranslation.y;
     vec2 emboldenAmount = miscInfo.zw * 0.5;
 
-    // Perform the transform.
-    vec2 fromPosition = transformLinear * aFromPosition + transformTranslation;
-    vec2 ctrlPosition = transformLinear * aCtrlPosition + transformTranslation;
-    vec2 toPosition = transformLinear * aToPosition + transformTranslation;
-
     // Embolden as necessary.
-    fromPosition -= aFromNormal * emboldenAmount;
-    ctrlPosition -= aCtrlNormal * emboldenAmount;
-    toPosition -= aToNormal * emboldenAmount;
+    vec2 fromPosition = aFromPosition - aFromNormal * emboldenAmount;
+    vec2 ctrlPosition = aCtrlPosition - aCtrlNormal * emboldenAmount;
+    vec2 toPosition = aToPosition - aToNormal * emboldenAmount;
+
+    // Perform the transform.
+    fromPosition = transformLinear * fromPosition + transformTranslation;
+    ctrlPosition = transformLinear * ctrlPosition + transformTranslation;
+    toPosition = transformLinear * toPosition + transformTranslation;
 
     // Compute edge vectors.
     vec2 v02 = toPosition - fromPosition;

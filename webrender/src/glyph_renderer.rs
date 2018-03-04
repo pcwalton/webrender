@@ -235,7 +235,7 @@ impl Renderer {
                 x_scale, 0.0, 0.0, -1.0,
                 rect.origin.x, rect.max_y(), 0.0, 0.0,
                 rect.size.width, rect.size.height,
-                glyph.embolden_amount.x * x_scale,
+                glyph.embolden_amount.x,
                 glyph.embolden_amount.y,
             ]);
         }
