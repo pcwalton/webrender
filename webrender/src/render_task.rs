@@ -604,9 +604,11 @@ impl RenderTask {
                 task_info.target_kind
             }
 
-            RenderTaskKind::Glyph(..) => {
-                // FIXME(pcwalton): Support color.
-                RenderTargetKind::Alpha
+            RenderTaskKind::Glyph(ref task_info) => {
+                match task_info.render_mode {
+                    FontRenderMode::Subpixel => RenderTargetKind::Color,
+                    FontRenderMode::Alpha | FontRenderMode::Mono => RenderTargetKind::Alpha,
+                }
             }
 
             RenderTaskKind::Scaling(target_kind) => {
