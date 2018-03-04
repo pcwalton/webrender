@@ -17,6 +17,7 @@ use render_task::RenderTaskTree;
 use renderer::{ImageBufferKind, LazilyCompiledShader, Renderer, RendererError};
 use renderer::{RendererStats, ShaderKind, VertexArrayKind};
 use std::cmp;
+use std::f32;
 use tiling::GlyphJob;
 
 const HORIZONTAL_BIN_PADDING: i32 = 3;
@@ -233,8 +234,9 @@ impl Renderer {
             path_info_texels.extend_from_slice(&[
                 x_scale, 0.0, 0.0, -1.0,
                 rect.origin.x, rect.max_y(), 0.0, 0.0,
-                // FIXME(pcwalton): Only embolden for subpixel AA
-                rect.size.width, rect.size.height, 0.0125 * 12.0 * x_scale, 0.015 * 12.0,
+                rect.size.width, rect.size.height,
+                glyph.embolden_amount.x * x_scale,
+                glyph.embolden_amount.y,
             ]);
         }
 

@@ -25,6 +25,7 @@ use render_task::{RenderTask, RenderTaskCache, RenderTaskCacheKey, RenderTaskCac
 use render_task::{RenderTaskLocation, RenderTaskTree};
 use std::cmp;
 use std::collections::hash_map::Entry;
+use std::f32;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -34,6 +35,16 @@ use texture_cache::{TextureCache, TextureCacheHandle};
 use thread_profiler::register_thread_with_profiler;
 use tiling::{RenderPass, RenderTargetKind};
 use webrender_api::{DeviceIntPoint, DeviceIntSize, DevicePixel};
+
+/// Should match macOS 10.13 High Sierra.
+/// 
+/// We multiply by sqrt(2) to compensate for the fact that dilation amounts are relative to the
+/// pixel square on macOS and relative to the vertex normal in Pathfinder.
+const STEM_DARKENING_FACTOR_X: f32 = 0.0121 * f32::consts::SQRT_2;
+const STEM_DARKENING_FACTOR_Y: f32 = 0.0121 * 1.25 * f32::consts::SQRT_2;
+
+/// Likewise, should match macOS 10.13 High Sierra.
+const MAX_STEM_DARKENING_AMOUNT: f32 = 0.3 * f32::consts::SQRT_2;
 
 type PathfinderFontContext = pathfinder_font_renderer::FontContext<FontKey>;
 
@@ -541,14 +552,16 @@ impl GlyphRasterizer {
                               glyph_origin,
                               glyph_size);
                     // FIXME(pcwalton): Support vertical subpixel offsets.
-                    // FIXME(pcwalton): Compute correct embolden amount.
+                    // FIXME(pcwalton): Embolden amount should be 0 on macOS if "Use LCD font
+                    // smoothing" is unchecked in System Preferences.
+
                     GlyphRasterResult::Mesh(Mesh {
                         mesh_library: mesh_library,
                         origin: glyph_origin,
                         dimensions: glyph_size,
                         subpixel_offset: TypedPoint2D::new(glyph_subpixel_offset as f32, 0.0),
                         render_mode: glyph.font.render_mode,
-                        embolden_amount: TypedVector2D::zero(),
+                        embolden_amount: compute_embolden_amount(glyph.font.size.to_f32_px()),
                     })
                 }
                 _ => {
@@ -902,4 +915,9 @@ fn rasterize_200_glyphs() {
         &mut gpu_cache,
         &mut TextureCacheProfileCounters::new(),
     );
+}
+
+fn compute_embolden_amount(ppem: f32) -> TypedVector2D<f32, DevicePixel> {
+    TypedVector2D::new(f32::min(ppem * STEM_DARKENING_FACTOR_X, MAX_STEM_DARKENING_AMOUNT),
+                       f32::min(ppem * STEM_DARKENING_FACTOR_Y, MAX_STEM_DARKENING_AMOUNT))
 }
