@@ -11,7 +11,7 @@ use api::{GlyphDimensions, GlyphKey, SubpixelDirection};
 use api::{ImageData, ImageDescriptor, ImageFormat, LayerToWorldTransform};
 use app_units::Au;
 use device::TextureFilter;
-use euclid::{TypedPoint2D, TypedSize2D};
+use euclid::{TypedPoint2D, TypedSize2D, TypedVector2D};
 use glyph_cache::{CachedGlyphData, CachedGlyphInfo, GlyphCache};
 use gpu_cache::GpuCache;
 use internal_types::{FastHashSet, ResourceCacheError};
@@ -541,12 +541,14 @@ impl GlyphRasterizer {
                               glyph_origin,
                               glyph_size);
                     // FIXME(pcwalton): Support vertical subpixel offsets.
+                    // FIXME(pcwalton): Compute correct embolden amount.
                     GlyphRasterResult::Mesh(Mesh {
                         mesh_library: mesh_library,
                         origin: glyph_origin,
                         dimensions: glyph_size,
                         subpixel_offset: TypedPoint2D::new(glyph_subpixel_offset as f32, 0.0),
                         render_mode: glyph.font.render_mode,
+                        embolden_amount: TypedVector2D::zero(),
                     })
                 }
                 _ => {
@@ -670,6 +672,7 @@ impl GlyphRasterizer {
                         origin,
                         subpixel_offset,
                         render_mode,
+                        embolden_amount,
                         ..
                     } = mesh;
 
@@ -685,7 +688,8 @@ impl GlyphRasterizer {
                                                                           mesh_library,
                                                                           &origin,
                                                                           &subpixel_offset,
-                                                                          render_mode);
+                                                                          render_mode,
+                                                                          &embolden_amount);
                             let root_task_id = render_tasks.add(glyph_render_task);
                             let target_kind = match render_mode {
                                 FontRenderMode::Mono | FontRenderMode::Alpha => {
@@ -819,6 +823,7 @@ struct Mesh {
     subpixel_offset: TypedPoint2D<f32, DevicePixel>,
     dimensions: DeviceIntSize,
     render_mode: FontRenderMode,
+    embolden_amount: TypedVector2D<f32, DevicePixel>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]

@@ -8,7 +8,7 @@ use box_shadow::BoxShadowCacheKey;
 use clip::ClipWorkItem;
 use clip_scroll_tree::CoordinateSystemId;
 use device::TextureFilter;
-use euclid::TypedPoint2D;
+use euclid::{TypedPoint2D, TypedVector2D};
 use glyph_rasterizer::GpuGlyphCacheKey;
 use gpu_cache::GpuCache;
 use gpu_types::PictureType;
@@ -196,6 +196,7 @@ pub struct GlyphTask {
     pub origin: DeviceIntPoint,
     pub subpixel_offset: TypedPoint2D<f32, DevicePixel>,
     pub render_mode: FontRenderMode,
+    pub embolden_amount: TypedVector2D<f32, DevicePixel>,
 }
 
 // Where the source data for a blit task can be found.
@@ -443,7 +444,8 @@ impl RenderTask {
                      mesh_library: MeshLibrary,
                      origin: &DeviceIntPoint,
                      subpixel_offset: &TypedPoint2D<f32, DevicePixel>,
-                     render_mode: FontRenderMode)
+                     render_mode: FontRenderMode,
+                     embolden_amount: &TypedVector2D<f32, DevicePixel>)
                      -> Self {
         RenderTask {
             children: vec![],
@@ -453,6 +455,7 @@ impl RenderTask {
                 origin: *origin,
                 subpixel_offset: *subpixel_offset,
                 render_mode: render_mode,
+                embolden_amount: *embolden_amount,
             }),
             clear_mode: ClearMode::Transparent,
             saved_index: None,

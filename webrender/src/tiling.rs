@@ -10,7 +10,7 @@ use batch::{AlphaBatchBuilder, AlphaBatchContainer, ClipBatcher, resolve_image};
 use clip::{ClipStore};
 use clip_scroll_tree::{ClipScrollTree};
 use device::{FrameId, Texture};
-use euclid::TypedPoint2D;
+use euclid::{TypedPoint2D, TypedVector2D};
 use gpu_cache::{GpuCache};
 use gpu_types::{BlurDirection, BlurInstance, BrushFlags, BrushInstance, ClipChainRectIndex};
 use gpu_types::{ClipScrollNodeData, ClipScrollNodeIndex};
@@ -275,6 +275,7 @@ pub struct GlyphJob {
     pub origin: DeviceIntPoint,
     pub subpixel_offset: TypedPoint2D<f32, DevicePixel>,
     pub render_mode: FontRenderMode,
+    pub embolden_amount: TypedVector2D<f32, DevicePixel>,
 }
 
 /// A render target represents a number of rendering operations on a surface.
@@ -736,6 +737,7 @@ impl TextureCacheRenderTarget {
                     origin: task_info.origin,
                     subpixel_offset: task_info.subpixel_offset,
                     render_mode: task_info.render_mode,
+                    embolden_amount: task_info.embolden_amount,
                 });
             }
             RenderTaskKind::VerticalBlur(..) |
