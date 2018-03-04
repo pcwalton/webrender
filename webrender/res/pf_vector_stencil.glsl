@@ -9,6 +9,9 @@
 in vec2 aFromPosition;
 in vec2 aCtrlPosition;
 in vec2 aToPosition;
+in vec2 aFromNormal;
+in vec2 aCtrlNormal;
+in vec2 aToNormal;
 in int aPathID;
 in int aPad;
 
@@ -20,13 +23,19 @@ void main(void) {
     mat2 transformLinear = mat2(TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(0, 0)));
     vec2 transformTranslation = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(1, 0)).xy;
 
-    float rectHeight = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(2, 0)).y +
-        transformTranslation.y;
+    vec4 miscInfo = TEXEL_FETCH(sColor0, pathAddress, 0, ivec2(2, 0));
+    float rectHeight = miscInfo.x + transformTranslation.y;
+    vec2 emboldenAmount = miscInfo.zw * 0.5;
 
-    // Perform the linear component of the transform (everything but translation).
+    // Perform the transform.
     vec2 fromPosition = transformLinear * aFromPosition + transformTranslation;
     vec2 ctrlPosition = transformLinear * aCtrlPosition + transformTranslation;
     vec2 toPosition = transformLinear * aToPosition + transformTranslation;
+
+    // Embolden as necessary.
+    fromPosition -= aFromNormal * emboldenAmount;
+    ctrlPosition -= aCtrlNormal * emboldenAmount;
+    toPosition -= aToNormal * emboldenAmount;
 
     // Compute edge vectors.
     vec2 v02 = toPosition - fromPosition;

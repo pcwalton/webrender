@@ -10,7 +10,7 @@ use batch::BatchTextures;
 use debug_colors;
 use device::{Device, Texture, TextureFilter, VAO, VertexAttribute};
 use device::{VertexAttributeKind, VertexDescriptor};
-use euclid::{Point2D, Size2D, Transform3D};
+use euclid::{Point2D, Size2D, Transform3D, TypedVector2D, Vector2D};
 use internal_types::{RenderTargetInfo, SourceTexture};
 use profiler::GpuProfileTag;
 use render_task::RenderTaskTree;
@@ -49,6 +49,21 @@ pub const DESC_VECTOR_STENCIL: VertexDescriptor = VertexDescriptor {
         },
         VertexAttribute {
             name: "aToPosition",
+            count: 2,
+            kind: VertexAttributeKind::F32,
+        },
+        VertexAttribute {
+            name: "aFromNormal",
+            count: 2,
+            kind: VertexAttributeKind::F32,
+        },
+        VertexAttribute {
+            name: "aCtrlNormal",
+            count: 2,
+            kind: VertexAttributeKind::F32,
+        },
+        VertexAttribute {
+            name: "aToNormal",
             count: 2,
             kind: VertexAttributeKind::F32,
         },
@@ -206,14 +221,18 @@ impl Renderer {
         for (stenciled_glyph_index, &glyph_index) in glyph_indices.iter().enumerate() {
             let glyph = &glyphs[glyph_index];
             let stenciled_glyph = &current_page.glyphs[stenciled_glyph_index];
+            let x_scale = x_scale_for_render_mode(glyph.render_mode) as f32;
+            let subpixel_offset = TypedVector2D::new(glyph.subpixel_offset.x * x_scale,
+                                                     glyph.subpixel_offset.y);
             let rect = stenciled_glyph.stencil_rect()
                                       .to_f32()
                                       .translate(&-glyph.origin.to_f32().to_vector())
-                                      .translate(&glyph.subpixel_offset.to_vector());
+                                      .translate(&subpixel_offset);
             path_info_texels.extend_from_slice(&[
-                x_scale_for_render_mode(glyph.render_mode) as f32, 0.0, 0.0, -1.0,
+                x_scale, 0.0, 0.0, -1.0,
                 rect.origin.x, rect.max_y(), 0.0, 0.0,
-                rect.size.width, rect.size.height, 0.0, 0.0,
+                // FIXME(pcwalton): Only embolden for subpixel AA
+                rect.size.width, rect.size.height, 0.0125 * 12.0 * x_scale, 0.015 * 12.0,
             ]);
         }
 
@@ -243,11 +262,18 @@ impl Renderer {
         let mut instance_data = vec![];
         for (path_id, &glyph_id) in glyph_indices.iter().enumerate() {
             let glyph = &glyphs[glyph_id];
-            instance_data.extend(glyph.mesh_library.stencil_segments.iter().map(|segment| {
+            instance_data.extend(glyph.mesh_library
+                                      .stencil_segments
+                                      .iter()
+                                      .zip(glyph.mesh_library.stencil_normals.iter())
+                                      .map(|(segment, normals)| {
                 VectorStencilInstanceAttrs {
                     from_position: segment.from,
                     ctrl_position: segment.ctrl,
                     to_position: segment.to,
+                    from_normal: normals.from,
+                    ctrl_normal: normals.ctrl,
+                    to_normal: normals.to,
                     path_id: path_id as u16,
                 }
             }));
@@ -303,6 +329,9 @@ struct VectorStencilInstanceAttrs {
     from_position: Point2D<f32>,
     ctrl_position: Point2D<f32>,
     to_position: Point2D<f32>,
+    from_normal: Vector2D<f32>,
+    ctrl_normal: Vector2D<f32>,
+    to_normal: Vector2D<f32>,
     path_id: u16,
 }
 
