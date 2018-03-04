@@ -192,7 +192,8 @@ impl BlurTask {
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct GlyphTask {
-    pub mesh_library: MeshLibrary,
+    /// After job building, this becomes `None`.
+    pub mesh_library: Option<MeshLibrary>,
     pub origin: DeviceIntPoint,
     pub subpixel_offset: TypedPoint2D<f32, DevicePixel>,
     pub render_mode: FontRenderMode,
@@ -451,7 +452,7 @@ impl RenderTask {
             children: vec![],
             location: location,
             kind: RenderTaskKind::Glyph(GlyphTask {
-                mesh_library: mesh_library,
+                mesh_library: Some(mesh_library),
                 origin: *origin,
                 subpixel_offset: *subpixel_offset,
                 render_mode: render_mode,

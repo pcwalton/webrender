@@ -382,7 +382,7 @@ impl RenderTarget for ColorRenderTarget {
                     task_id,
                     task.children[0],
                     BlurDirection::Vertical,
-                    render_tasks,
+                    render_tasks.get_task_address(task_id),
                 );
             }
             RenderTaskKind::HorizontalBlur(ref info) => {
@@ -391,7 +391,7 @@ impl RenderTarget for ColorRenderTarget {
                     task_id,
                     task.children[0],
                     BlurDirection::Horizontal,
-                    render_tasks,
+                    render_tasks.get_task_address(task_id),
                 );
             }
             RenderTaskKind::Picture(ref task_info) => {
@@ -563,7 +563,7 @@ impl RenderTarget for AlphaRenderTarget {
                     task_id,
                     task.children[0],
                     BlurDirection::Vertical,
-                    render_tasks,
+                    render_tasks.get_task_address(task_id),
                 );
             }
             RenderTaskKind::HorizontalBlur(ref info) => {
@@ -572,7 +572,7 @@ impl RenderTarget for AlphaRenderTarget {
                     task_id,
                     task.children[0],
                     BlurDirection::Horizontal,
-                    render_tasks,
+                    render_tasks.get_task_address(task_id),
                 );
             }
             RenderTaskKind::Picture(ref task_info) => {
@@ -697,9 +697,11 @@ impl TextureCacheRenderTarget {
     fn add_task(
         &mut self,
         task_id: RenderTaskId,
-        render_tasks: &RenderTaskTree,
+        render_tasks: &mut RenderTaskTree,
     ) {
-        let task = &render_tasks[task_id];
+        let task_address = render_tasks.get_task_address(task_id);
+        let task = &mut render_tasks[task_id];
+        let target_rect = task.get_target_rect();
 
         match task.kind {
             RenderTaskKind::HorizontalBlur(ref info) => {
@@ -708,7 +710,7 @@ impl TextureCacheRenderTarget {
                     task_id,
                     task.children[0],
                     BlurDirection::Horizontal,
-                    render_tasks,
+                    task_address,
                 );
             }
             RenderTaskKind::Blit(ref task_info) => {
@@ -721,19 +723,17 @@ impl TextureCacheRenderTarget {
                     BlitSource::RenderTask { task_id } => {
                         // Add a blit job to copy from an existing render
                         // task to this target.
-                        let (target_rect, _) = task.get_target_rect();
                         self.blits.push(BlitJob {
                             source: BlitJobSource::RenderTask(task_id),
-                            target_rect,
+                            target_rect: target_rect.0,
                         });
                     }
                 }
             }
-            RenderTaskKind::Glyph(ref task_info) => {
-                // FIXME(pcwalton): Avoid this copy!
+            RenderTaskKind::Glyph(ref mut task_info) => {
                 self.glyphs.push(GlyphJob {
-                    mesh_library: task_info.mesh_library.clone(),
-                    target_rect: task.get_target_rect().0,
+                    mesh_library: task_info.mesh_library.take().unwrap(),
+                    target_rect: target_rect.0,
                     origin: task_info.origin,
                     subpixel_offset: task_info.subpixel_offset,
                     render_mode: task_info.render_mode,
@@ -1021,11 +1021,11 @@ impl BlurTask {
         task_id: RenderTaskId,
         source_task_id: RenderTaskId,
         blur_direction: BlurDirection,
-        render_tasks: &RenderTaskTree,
+        task_address: RenderTaskAddress,
     ) {
         let instance = BlurInstance {
-            task_address: render_tasks.get_task_address(task_id),
-            src_task_address: render_tasks.get_task_address(source_task_id),
+            task_address: task_address,
+            src_task_address: task_address,
             blur_direction,
         };
 
